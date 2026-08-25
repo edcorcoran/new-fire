@@ -1,6 +1,6 @@
 # new fire
 
-Follow record labels; see what they put out.
+Follow record labels; see what they release; get the new fire.
 
 Search MusicBrainz for a label, follow it, and its releases appear newest-first
 with links to hear them. It is built for people who follow *labels* rather than
