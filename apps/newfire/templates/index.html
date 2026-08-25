@@ -1,0 +1,47 @@
+[[extend 'layout.html']]
+
+<h1>New releases from the labels you follow</h1>
+<p class="lede">
+  Follow a record label and every record it puts out shows up here, newest
+  first — with links to hear it.
+</p>
+
+<form class="searchbar" method="GET" action="[[=URL('search')]]">
+  <input type="search" name="q" placeholder="Find a label, e.g. Drag City" autofocus>
+  <button type="submit">Search</button>
+</form>
+
+[[if not signed_in:]]
+<p class="notice">
+  <a href="[[=URL('auth/login')]]">Log in</a> or
+  <a href="[[=URL('auth/register')]]">sign up</a> to follow labels and see their
+  new releases here.
+</p>
+[[pass]]
+
+[[if signed_in and not following:]]
+<div class="empty">
+  <p>You aren't following any labels yet.</p>
+  <p class="small">Search for one above, open it, and hit Follow.</p>
+</div>
+[[pass]]
+
+[[if signed_in and following:]]
+<div class="section-head">
+  <h2>Latest from your labels</h2>
+  [[if feed:]]
+  <a class="small" href="[[=URL('tracked')]]">See all
+    [[=following]] label[[='s' if following != 1 else '']] &rarr;</a>
+  [[pass]]
+</div>
+
+[[if feed:]]
+[[releases = feed]]
+[[include "_release_grid.html"]]
+[[else:]]
+<div class="empty">
+  <p>Nothing cached yet for the labels you follow.</p>
+  <p class="small">Releases show up here once the first sync finishes.</p>
+</div>
+[[pass]]
+[[pass]]

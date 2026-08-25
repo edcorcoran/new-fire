@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 1.5 18 18">
+  <!--
+    The header mark, framed to fill the tab. The path is the one in
+    layout.html; only the viewBox differs, cropped from 0 0 24 24 to sit close
+    around the flame so it does not shrink to nothing at 16px.
+
+    Dark first, exactly as newfire.css does it: the bare rule is the dark theme
+    and light is the override, so the icon tracks the tab strip it sits in.
+  -->
+  <style>
+    path { fill: #ff5c39; }
+    @media (prefers-color-scheme: light) { path { fill: #d93d17; } }
+  </style>
+  <path d="M12 2c.6 3.4-1.2 4.7-2.6 6.2C8 9.7 7 11 7 13.4A5 5 0 0 0 17 14c0-2.2-.9-3.6-2-5 .2 1.6-.5 2.6-1.4 3-.6.3-1.1-.2-1-.9.4-2.6-.6-5.9-.6-9Z"/>
+</svg>

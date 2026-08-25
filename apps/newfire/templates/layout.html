@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <base href="[[=URL('static')]]/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Dark first; the stylesheet flips to light off prefers-color-scheme. -->
+    <meta name="color-scheme" content="dark light">
+    <title>[[=globals().get('page_title') or 'new fire']]</title>
+    <!-- The header mark. SVG first, so it stays sharp and follows the tab
+         strip's light/dark; the ICO is the fallback for browsers that ignore
+         it. sizes="any" is what stops Chrome preferring the raster. -->
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <link rel="stylesheet" href="css/newfire.css">
+    [[block page_head]]<!-- individual pages can customize header here -->[[end]]
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="[[=URL('index')]]">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 2c.6 3.4-1.2 4.7-2.6 6.2C8 9.7 7 11 7 13.4A5 5 0 0 0 17 14c0-2.2-.9-3.6-2-5 .2 1.6-.5 2.6-1.4 3-.6.3-1.1-.2-1-.9.4-2.6-.6-5.9-.6-9Z"
+                  fill="var(--accent)"/>
+          </svg>
+          <span>new fire</span>
+        </a>
+
+        <nav class="site-nav">
+          <a href="[[=URL('search')]]">Search</a>
+          [[if globals().get('user'):]]
+          <a href="[[=URL('tracked')]]">Following</a>
+          <details class="menu">
+            <summary>[[=globals().get('user',{}).get('email')]]</summary>
+            <div class="menu-panel">
+              <a href="[[=URL('auth/profile')]]">Edit profile</a>
+              <a href="[[=URL('auth/change_password')]]">Change password</a>
+              <a href="[[=URL('auth/logout')]]">Log out</a>
+            </div>
+          </details>
+          [[else:]]
+          <a href="[[=URL('auth/login')]]">Log in</a>
+          <a class="button" href="[[=URL('auth/register')]]">Sign up</a>
+          [[pass]]
+        </nav>
+      </div>
+    </header>
+
+    <main class="container">
+      <flash-alerts data-alert="[[=globals().get('flash','')]]"></flash-alerts>
+      [[include]]
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        Data from <a href="https://musicbrainz.org">MusicBrainz</a>
+        and the <a href="https://coverartarchive.org">Cover Art Archive</a>.
+        Source on <a href="https://github.com/edcorcoran/new-fire">GitHub</a>.
+      </div>
+    </footer>
+
+    <script src="js/utils.js"></script>
+    [[block page_scripts]]<!-- individual pages can add scripts here -->[[end]]
+  </body>
+</html>

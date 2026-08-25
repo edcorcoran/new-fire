@@ -1,0 +1,21 @@
+[[
+# Pager shared by the paginated lists. Expects `page`, `total_pages`, `filters`
+# and `page_url`, a callable taking a page number and returning its URL.
+#
+# The URL builder is passed in rather than assembled here because the two pages
+# route differently, and because every link has to carry the active filters or
+# paging would silently clear them.
+]]
+[[if total_pages > 1:]]
+<div class="pagination">
+  [[if page > 1:]]
+  <a href="[[=page_url(1)]]" title="First page">&laquo;</a>
+  <a href="[[=page_url(page-1)]]">&larr; Previous</a>
+  [[pass]]
+  <span>Page [[=page]] of [[=total_pages]]</span>
+  [[if page < total_pages:]]
+  <a href="[[=page_url(page+1)]]">Next &rarr;</a>
+  <a href="[[=page_url(total_pages)]]" title="Last page">&raquo;</a>
+  [[pass]]
+</div>
+[[pass]]

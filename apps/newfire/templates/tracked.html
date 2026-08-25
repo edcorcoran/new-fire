@@ -1,0 +1,64 @@
+[[extend 'layout.html']]
+
+<h1>Following</h1>
+
+[[if not followed:]]
+<div class="empty">
+  <p>You aren't following any labels yet.</p>
+  <p class="small">Open a label and hit Follow to see its new releases here.</p>
+</div>
+[[pass]]
+
+[[if followed:]]
+<p class="lede">
+  The newest records across the
+  [[=len(followed)]] label[[='s' if len(followed) != 1 else '']] you follow.
+</p>
+
+<div class="section-head">
+  <h2>New releases</h2>
+  <span class="muted small">
+    [[if filters and total != unfiltered:]]
+    [[=total]] of [[=unfiltered]] albums
+    [[else:]]
+    [[=total]] album[[='s' if total != 1 else '']]
+    [[pass]]
+  </span>
+</div>
+
+[[include "_filters.html"]]
+
+[[if feed:]]
+[[releases = feed]]
+[[include "_release_grid.html"]]
+[[
+page_url = lambda n: URL('tracked', vars=dict(list(filters.items()) + [('page', n)]))
+]]
+[[include "_pagination.html"]]
+[[else:]]
+<div class="empty">
+  [[if filters:]]
+  <p>Nothing matches these filters.</p>
+  <p class="small"><a href="?">Clear them</a> to see all [[=unfiltered]] albums.</p>
+  [[else:]]
+  <p>Nothing cached yet for these labels.</p>
+  <p class="small">New releases appear here after the next sync.</p>
+  [[pass]]
+</div>
+[[pass]]
+
+<h2>Labels</h2>
+<ul class="label-list">
+  [[for label in followed:]]
+  <li>
+    <span>
+      <a href="[[=URL('label', label['label_gid'])]]">[[=label['name']]]</a>
+      [[if label['disambiguation']:]]
+      <span class="muted small">([[=label['disambiguation']]])</span>
+      [[pass]]
+    </span>
+    <span class="muted small">[[=label['releases']]] releases cached</span>
+  </li>
+  [[pass]]
+</ul>
+[[pass]]

@@ -1,0 +1,7 @@
+<!-- Bandcamp's mark only, cropped square and vertically centred. The full
+     wordmark shipped here before, but its lettering had no fill and so
+     rendered black-on-black in the dark theme, and a wide wordmark cannot sit
+     in the same round chip as the square Spotify and Apple Music icons. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 279.2 279.2">
+  <path d="M0 336.3h190.3l88.9-164.1H88.9z" transform="translate(0 -114.65)" fill="#60909a"/>
+</svg>
