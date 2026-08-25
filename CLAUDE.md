@@ -369,7 +369,25 @@ function callback(elem) {
 
 ## Testing
 
-There is no test suite in this repo yet.
+```bash
+.venv/bin/pip install pytest
+.venv/bin/python -m pytest
+```
+
+The suite covers the cache layer — `musicbrainz/writer.py` and
+`musicbrainz/reader.py` — which is the part that can be tested without booting
+py4web: it reaches the database through a plain pydal DAL, so
+`define_cache_tables` can point the schema at in-memory SQLite. Tests fill the
+cache through the real writer and read it back through the real reader; a
+`FakeSource` in `tests/conftest.py` stands in for MusicBrainz, which is the
+MBSource seam doing its job.
+
+What the tests are protecting is mostly *convergence and collapsing*: reruns of
+an interrupted sync must not duplicate rows, a pass that did not reach the end
+of a catalogue must not prune, and editions of one record must collapse into a
+single album dated when this label first issued it. When changing either file,
+run the suite — and if a change is meant to alter one of those behaviours,
+expect a named test to fail and update it deliberately rather than deleting it.
 
 ## Building & Running
 

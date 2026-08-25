@@ -122,6 +122,19 @@ resolving labels by name picks the wrong entity often enough to matter.
 lags the live service, so seeding *over* a cache the app has already brought up
 to date will roll it back. Seed first, then let the app catch up.
 
+## Tests
+
+```bash
+.venv/bin/pip install pytest
+.venv/bin/python -m pytest
+```
+
+They cover the cache layer, which is the part worth protecting: the writer's
+idempotence (an interrupted sync rerun has to converge, not duplicate) and the
+reader's collapsing and dating (editions of one record become one album, dated
+when *this* label issued it). Everything runs against in-memory SQLite with a
+fake source, so the suite needs no network, no mirror and no app boot.
+
 ## Background work
 
 The scheduler runs three tasks, all registered in `apps/newfire/tasks.py`:
@@ -155,6 +168,7 @@ apps/newfire/
     maintenance.py      cache cleanup
     ratelimit.py        cross-process rate limiter
 scripts/seed_cache.py   build a prewarmed cache from a mirror
+tests/                  cache-layer tests; see "Tests" above
 deploy/                 Passenger and cron entry points; see DEPLOY.md
 docs/                   the design study
 ```
