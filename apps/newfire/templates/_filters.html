@@ -1,0 +1,55 @@
+[[
+# The filter bar, shared by /tracked and a label page.
+#
+# Expects `filters` (the active dict from controllers.read_filters) and
+# optionally `filter_labels` (the followed labels, when more than one).
+#
+# A plain GET form, so a filtered view is a URL: bookmarkable, shareable, and
+# correct under the back button. It carries no page parameter, so changing a
+# filter returns to page 1 rather than to page 9 of a shorter list.
+]]
+<form class="filters" method="GET">
+  <select name="type" onchange="this.form.submit()" aria-label="Format">
+    <option value="">Everything</option>
+    <option value="album"  [[='selected' if filters.get('type')=='album'  else '']]>Albums</option>
+    <option value="ep"     [[='selected' if filters.get('type')=='ep'     else '']]>EPs</option>
+    <option value="single" [[='selected' if filters.get('type')=='single' else '']]>Singles</option>
+    <option value="other"  [[='selected' if filters.get('type')=='other'  else '']]>Comps &amp; live</option>
+  </select>
+
+  <select name="reissue" onchange="this.form.submit()" aria-label="Reissues">
+    <option value="">New and reissued</option>
+    <option value="hide" [[='selected' if filters.get('reissue')=='hide' else '']]>Hide reissues</option>
+    <option value="only" [[='selected' if filters.get('reissue')=='only' else '']]>Reissues only</option>
+  </select>
+
+  <select name="status" onchange="this.form.submit()" aria-label="Release status">
+    <option value="">Out and upcoming</option>
+    <option value="released" [[='selected' if filters.get('status')=='released' else '']]>Out now</option>
+    <option value="upcoming" [[='selected' if filters.get('status')=='upcoming' else '']]>Not out yet</option>
+  </select>
+
+  <select name="service" onchange="this.form.submit()" aria-label="Where to listen">
+    <option value="">Anywhere</option>
+    <option value="any"         [[='selected' if filters.get('service')=='any'         else '']]>Has a listen link</option>
+    <option value="apple_music" [[='selected' if filters.get('service')=='apple_music' else '']]>Apple Music</option>
+    <option value="spotify"     [[='selected' if filters.get('service')=='spotify'     else '']]>Spotify</option>
+    <option value="bandcamp"    [[='selected' if filters.get('service')=='bandcamp'    else '']]>Bandcamp</option>
+  </select>
+
+  [[if filter_labels:]]
+  <select name="label" onchange="this.form.submit()" aria-label="Label">
+    <option value="">All labels</option>
+    [[for option in filter_labels:]]
+    <option value="[[=option['label_gid']]]"
+      [[='selected' if filters.get('label')==option['label_gid'] else '']]>[[=option['name']]]</option>
+    [[pass]]
+  </select>
+  [[pass]]
+
+  <noscript><button type="submit">Apply</button></noscript>
+
+  [[if filters:]]
+  <a class="filter-clear" href="?">Clear</a>
+  [[pass]]
+</form>

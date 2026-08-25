@@ -1,0 +1,74 @@
+[[
+# The release grid: one card per album.
+#
+# Expects `releases`, as built by musicbrainz/reader.py — either get_releases
+# (a label's own catalogue) or get_recent_releases (the cross-label feed). The
+# two differ only in which optional keys are present, so both render here and
+# the feed's label credit and the label page's catalogue number are each drawn
+# only when the reader supplied one.
+#
+# A card is one release group, not one release: the CD, LP and digital editions
+# of a record collapse into a single card, dated when this label first issued
+# the record. Where that trails the work's original release the card says so,
+# which is the difference between "new album" and "back in print".
+]]
+<ul class="release-grid">
+  [[for r in releases:]]
+  <li class="release">
+    <a class="cover" href="[[=r['musicbrainz_url']]]" target="_blank" rel="noopener"
+       title="[[=r['title']]] on MusicBrainz">
+      <span class="cover-fallback" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>
+        </svg>
+      </span>
+      [[if r['cover_art_url']:]]
+      <!-- The archive still 404s occasionally; dropping the img reveals the
+           placeholder the cover is already painted with. -->
+      <img src="[[=r['cover_art_url']]]" alt="[[=r['title']]] cover art"
+           loading="lazy" onerror="this.remove()">
+      [[pass]]
+      [[if r['is_reissue'] or r['editions'] > 1 or (r['release_group_type'] and r['release_group_type'] != 'Album'):]]
+      <span class="badges">
+        [[if r['is_reissue']:]]
+        <!-- The date on the row is when this label issued it; this is when the
+             record first came out anywhere. -->
+        <span class="badge reissue">Reissue &middot; [[=r['original_date'][:4]]]</span>
+        [[pass]]
+        [[if r['editions'] > 1:]]<span class="badge">[[=r['editions']]] editions</span>[[pass]]
+        [[if r['release_group_type'] and r['release_group_type'] != 'Album':]]
+        <span class="badge">[[=r['release_group_type']]]</span>
+        [[pass]]
+      </span>
+      [[pass]]
+    </a>
+
+    <p class="release-title">
+      <a href="[[=r['musicbrainz_url']]]" target="_blank" rel="noopener">[[=r['title']]]</a>
+    </p>
+
+    <p class="release-artist">
+      [[if r['artist_url']:]]
+      <a href="[[=r['artist_url']]]" target="_blank" rel="noopener">[[=r['artist_credit']]]</a>
+      [[else:]]
+      [[=r['artist_credit']]]
+      [[pass]]
+    </p>
+
+    <div class="release-meta">
+      <span>[[=r['date'] or 'undated']]</span>
+      [[if r.get('label_name'):]]
+      <span class="dot">·</span>
+      <a href="[[=URL('label', r['label_gid'])]]">[[=r['label_name']]]</a>
+      [[pass]]
+      [[if r.get('catalog_number'):]]
+      <span class="dot">·</span><span>[[=r['catalog_number']]]</span>
+      [[pass]]
+    </div>
+
+    [[if r['streaming']:]]
+    <div class="listen">[[include "_streaming_links.html"]]</div>
+    [[pass]]
+  </li>
+  [[pass]]
+</ul>

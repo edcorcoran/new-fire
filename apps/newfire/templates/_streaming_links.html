@@ -1,0 +1,15 @@
+[[
+# Listen links for one release. Expects `r`, a release dict as built by
+# musicbrainz/reader.py, and an enclosing element carrying class="listen".
+#
+# Included rather than repeated in each view so that adding a service is a
+# one-file change. Includes are spliced in before the template is translated to
+# Python, so `r` from the enclosing loop is in scope here. A Python comment
+# rather than an HTML one because this renders once per card.
+#
+# The links are merged across every edition in the release group, so a card
+# shows Spotify even when only its digital edition carries the relationship.
+]]
+[[if r['streaming'].get('apple_music'):]]<a href="[[=r['streaming']['apple_music']]]" target="_blank" rel="noopener" title="Apple Music"><img src="[[=URL('static','img/apple-music.svg')]]" alt="Apple Music" width="15" height="15"></a>[[pass]]
+[[if r['streaming'].get('spotify'):]]<a href="[[=r['streaming']['spotify']]]" target="_blank" rel="noopener" title="Spotify"><img src="[[=URL('static','img/spotify.svg')]]" alt="Spotify" width="15" height="15"></a>[[pass]]
+[[if r['streaming'].get('bandcamp'):]]<a href="[[=r['streaming']['bandcamp']]]" target="_blank" rel="noopener" title="Bandcamp"><img src="[[=URL('static','img/bandcamp.svg')]]" alt="Bandcamp" width="15" height="15"></a>[[pass]]

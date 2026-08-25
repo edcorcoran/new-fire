@@ -1,0 +1,47 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Secrets and credentials
+password.txt
+*.key
+*.pem
+.env
+.env.*
+
+# py4web / web2py
+apps/__pycache__/
+apps/*/__pycache__/
+apps/*/sessions/
+apps/*/uploads/
+apps/*/databases/
+apps/*/cache/
+apps/*/errors/
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+apps/newfire/settings_private.py
+# py4web's own bookkeeping: error tickets, migration metadata, and the
+# session secret that signs cookies. All generated, none of it ours.
+apps/.service/

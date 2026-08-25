@@ -1,0 +1,52 @@
+[[extend 'layout.html']]
+
+<h1>Find a label</h1>
+
+<form class="searchbar" method="GET" action="[[=URL('search')]]">
+  <input type="search" name="q" value="[[=query]]"
+         placeholder="Label name, e.g. Drag City" autofocus>
+  <button type="submit">Search</button>
+</form>
+
+[[if query and not signed_in:]]
+<!-- Anonymous searches are answered from the local cache only; a novel query
+     never goes out to MusicBrainz. Say so, or an empty result reads as "this
+     label does not exist". -->
+<p class="notice">
+  Showing already-cached labels only.
+  <a href="[[=URL('auth/login')]]">Log in</a> to search all of MusicBrainz.
+</p>
+[[pass]]
+
+[[if query and not results:]]
+<div class="empty"><p>Nothing found for <strong>[[=query]]</strong>.</p></div>
+[[pass]]
+
+[[if results:]]
+<p class="muted small">
+  [[=len(results)]] result[[='s' if len(results) != 1 else '']] for
+  <strong>[[=query]]</strong>[[if from_cache:]] &mdash; from the local cache[[pass]]
+</p>
+
+<ul class="label-list">
+  [[for r in results:]]
+  <li>
+    <span>
+      <a href="[[=URL('label', r['gid'])]]">[[=r['name']]]</a>
+      [[if r['disambiguation']:]]
+      <!-- Several labels share a name; six are called "Domino". -->
+      <span class="muted small">([[=r['disambiguation']]])</span>
+      [[pass]]
+      <br>
+      <span class="muted small">
+        [[=r['label_type'] or 'Label']][[if r['area_name']:]] &middot; [[=r['area_name']]][[pass]]
+      </span>
+    </span>
+    <span class="muted small">
+      [[if r['tracked']:]]Following &middot; [[pass]]
+      [[=r['releases'] or 0]] cached
+    </span>
+  </li>
+  [[pass]]
+</ul>
+[[pass]]

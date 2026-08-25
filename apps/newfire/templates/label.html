@@ -1,0 +1,80 @@
+[[extend 'layout.html']]
+
+[[block page_head]]
+[[if not complete:]]
+<!-- The releases are being fetched in the background; come back for them. -->
+<meta http-equiv="refresh" content="10">
+[[pass]]
+[[end]]
+
+<div class="label-head">
+  <div>
+    <h1>[[=label.name]]</h1>
+    [[if label.disambiguation:]]
+    <p class="muted">[[=label.disambiguation]]</p>
+    [[pass]]
+    [[if complete:]]
+    <div class="stats">
+      <div><span class="k">Albums</span><span class="v">[[=unfiltered]]</span></div>
+      <div><span class="k">Releases</span><span class="v">[[=editions]]</span></div>
+      [[if label.label_type:]]
+      <div><span class="k">Type</span><span class="v">[[=label.label_type]]</span></div>
+      [[pass]]
+      [[if label.area_name:]]
+      <div><span class="k">Area</span><span class="v">[[=label.area_name]]</span></div>
+      [[pass]]
+    </div>
+    [[pass]]
+  </div>
+
+  [[if signed_in:]]
+  [[if tracked:]]
+  <!-- Reads as state at rest and as an action on hover, so the button says both
+       "you follow this" and "click to stop" without needing two controls. -->
+  <form method="POST" action="[[=URL('untrack', gid, signer=url_signer)]]">
+    <button type="submit" class="following" title="Unfollow this label">
+      <span class="following-state">&#10003; Following</span>
+      <span class="following-action">Unfollow</span>
+    </button>
+  </form>
+  [[else:]]
+  <form method="POST" action="[[=URL('track', gid, signer=url_signer)]]">
+    <button type="submit">Follow this label</button>
+  </form>
+  [[pass]]
+  [[pass]]
+</div>
+
+[[if not complete:]]
+<p class="notice">
+  <strong>Fetching this label's releases in the background[[if editions:]] &mdash;
+  [[=editions]] so far[[pass]].</strong>
+  This page refreshes itself.
+</p>
+[[if sync_error:]]
+<p class="notice error">Last attempt failed: [[=sync_error]]</p>
+[[pass]]
+[[pass]]
+
+[[if complete:]]
+[[include "_filters.html"]]
+[[pass]]
+
+[[if complete and releases:]]
+[[include "_release_grid.html"]]
+[[
+page_url = lambda n: URL('label', gid, vars=dict(list(filters.items()) + [('page', n)]))
+]]
+[[include "_pagination.html"]]
+[[pass]]
+
+[[if complete and not releases:]]
+<div class="empty">
+  [[if filters:]]
+  <p>Nothing matches these filters.</p>
+  <p class="small"><a href="[[=URL('label', gid)]]">Clear them</a> to see all [[=unfiltered]] albums.</p>
+  [[else:]]
+  <p>No releases found.</p>
+  [[pass]]
+</div>
+[[pass]]
