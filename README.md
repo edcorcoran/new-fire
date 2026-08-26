@@ -97,8 +97,8 @@ Settings worth knowing:
 A label nobody has looked at takes one request per hundred releases to fill, at
 one request a second. Fine for you, once. Not fine as a stranger's first
 impression. If you have a MusicBrainz Postgres mirror, seed from it instead. The
-387 labels below took **245 seconds** from a mirror; the same catalogue over the
-web service is some 1,100 requests and at least eighteen minutes, all of it
+636 labels below took **277 seconds** from a mirror; the same catalogue over the
+web service is some 1,450 requests and at least twenty-five minutes, all of it
 MusicBrainz's bandwidth rather than yours:
 
 ```bash
@@ -114,8 +114,8 @@ could not reach.
 
 `scripts/seed_labels.txt` is a starter list, meant to be edited. Seeding all of
 MusicBrainz is not an option — 278,000 labels carry 4.5M releases, some 2–3 GB
-of cache — so seeding is always a chosen list. The 387 labels shipped here are
-~108,000 releases and about 80 MB. Note the list records MBIDs, not names:
+of cache — so seeding is always a chosen list. The 636 labels shipped here are
+~144,000 releases and about 108 MB. Note the list records MBIDs, not names:
 resolving labels by name picks the wrong entity often enough to matter.
 
 The list is in four blocks: 69 hand-picked labels, then three generated from the

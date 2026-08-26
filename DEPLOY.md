@@ -164,7 +164,7 @@ Note which file is copied. `seed_cache.py` writes to `./seed`, never into
 must not be seeded over. `seed/` is gitignored, so the build artifact stays out
 of the repo and off the server except by the line above.
 
-About 80 MB for the 387 labels in `scripts/seed_labels.txt`. Skip it and the
+About 108 MB for the 636 labels in `scripts/seed_labels.txt`. Skip it and the
 first stranger to search waits on MusicBrainz at one request per second.
 
 **4. Point the domain at the process.** `newfire.music` is its own registered
