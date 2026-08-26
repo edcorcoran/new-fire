@@ -155,12 +155,17 @@ rolls it back.
 ```bash
 # local
 export MB_DB_URI="postgres://musicbrainz:musicbrainz@your-mirror:5432/musicbrainz_db"
-.venv/bin/python scripts/seed_cache.py --labels scripts/seed_labels.txt
-rsync -avz apps/newfire/databases/mbcache.db newfire_admin@vps:~/newfire/apps/newfire/databases/
+.venv/bin/python scripts/seed_cache.py --labels scripts/seed_labels.txt --out ./seed
+rsync -avz seed/mbcache.db newfire_admin@vps:~/newfire/apps/newfire/databases/
 ```
 
-About 45 MB. Skip it and the first stranger to search waits on MusicBrainz at
-one request per second.
+Note which file is copied. `seed_cache.py` writes to `./seed`, never into
+`apps/newfire/databases` -- the cache the app is using is the one thing that
+must not be seeded over. `seed/` is gitignored, so the build artifact stays out
+of the repo and off the server except by the line above.
+
+About 80 MB for the 387 labels in `scripts/seed_labels.txt`. Skip it and the
+first stranger to search waits on MusicBrainz at one request per second.
 
 **4. Point the domain at the process.** `newfire.music` is its own registered
 domain rather than a subdomain of one already here, so DNS comes first: point it
@@ -232,6 +237,44 @@ code, so replacing it is the only way to pick up new code. Expect up to a
 minute of downtime while cron notices, and note that killing it also stops any
 label sync that was running -- the scheduler returns those runs to the queue on
 the next start, so nothing is lost but the work is redone.
+
+### Shipping a re-seeded cache
+
+`git pull` does not carry the cache. It is a gitignored build artifact, so when
+`scripts/seed_labels.txt` grows the server keeps serving the old one until the
+file itself is copied up. Rebuild it locally, ship it beside the live file, and
+swap it in:
+
+```bash
+# local, against the mirror
+export MB_DB_URI="postgres://musicbrainz:musicbrainz@your-mirror:5432/musicbrainz_db"
+.venv/bin/python scripts/seed_cache.py --labels scripts/seed_labels.txt --out ./seed
+rsync -avz seed/mbcache.db newfire_admin@vps:~/newfire/apps/newfire/databases/mbcache.db.new
+```
+
+```bash
+# on the VPS
+pkill -f "py4web run"
+cd ~/newfire/apps/newfire/databases
+rm -f mbcache.db-wal mbcache.db-shm
+mv mbcache.db.new mbcache.db
+```
+
+The order is the whole procedure. **Copy alongside, then rename**, so the swap
+is one atomic `mv` rather than a minute of rsync writing into a database the app
+has open. **Kill first**, because `-wal` and `-shm` belong to the file they were
+written against: applying the old WAL to the new database is corruption rather
+than a stale read, and they can only be removed once nothing holds the database
+open. Then leave it alone -- cron restarts the server within a minute, and that
+minute is the entire downtime.
+
+A replaced cache is the mirror's view, so every label in it rolls back to
+whatever the mirror last replicated, which for a typical mirror is months. That
+is a regression, not a loss: `tracked_label` lives in `storage.db`, which none
+of this touches, and the nightly sweep re-reads any followed label whose remote
+count no longer matches its local one -- so followed labels are current again
+within a day, and a seeded label nobody follows refreshes the first time someone
+opens it.
 
 ## Operating notes
 
