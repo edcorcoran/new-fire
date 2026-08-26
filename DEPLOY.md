@@ -5,7 +5,9 @@ Three things about that host shape everything below:
 
 - **No root.** `newfire_admin` has no sudo, and neither does any other account
   on the box -- DreamHost grants it on Dedicated and DreamCompute, not VPS. So
-  no `apt`, no systemd unit, no editing anything under `/etc`.
+  no `apt`, no systemd unit, no editing anything under `/etc`, and no installing
+  the `python3-venv` package that a stock `python3 -m venv` needs -- which is
+  why step 1 builds the virtualenv the long way round.
 - **No Passenger.** DreamHost withdrew it. The supported way to run a Python app
   is now their **Proxy Server** -- Apache `mod_proxy` in front of a process you
   keep alive yourself on a high port. Some DreamHost KB pages still describe the
@@ -93,12 +95,45 @@ where only the proxy can reach it.
 dependency stack declares `>=3.9` and nothing in this app uses a newer stdlib
 API. Do not build a Python from source.
 
+Plain `python3 -m venv ~/newfire-venv` fails on this host:
+
+```
+The virtual environment was not created successfully because ensurepip is not
+available.  On Debian/Ubuntu systems, you need to install the python3-venv
+package [...]
+```
+
+Debian and Ubuntu split `ensurepip` and its bundled wheels out of the stdlib
+into a separate `python3.10-venv` package, and the advice in that message is an
+`apt` you do not have. The `venv` module itself is present — only its pip
+bootstrap is missing — so build the environment without pip and bootstrap pip
+into it afterwards, which needs nothing but the network:
+
 ```bash
 git clone https://github.com/edcorcoran/new-fire.git ~/newfire
-python3 -m venv ~/newfire-venv
-~/newfire-venv/bin/pip install --upgrade pip
+
+rm -rf ~/newfire-venv          # a failed `python3 -m venv` leaves a stub behind
+python3 -m venv --without-pip ~/newfire-venv
+curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+~/newfire-venv/bin/python /tmp/get-pip.py
+~/newfire-venv/bin/pip install setuptools wheel
 ~/newfire-venv/bin/pip install py4web
 ```
+
+`get-pip.py` carries a pip wheel inside itself, so it has nothing to bootstrap
+from and installs a current pip — no `pip install --upgrade pip` afterwards.
+`setuptools` and `wheel` are named explicitly because `--without-pip` skips
+those too, and a dependency that ships no wheel for this platform will want
+them.
+
+Debian's `virtualenv` is also on the system path, and it seeds pip from its own
+wheels rather than from `ensurepip`, so `python3 -m virtualenv ~/newfire-venv`
+is a one-line substitute for the four above — *when* the `python3-pip-whl` and
+`python3-setuptools-whl` packages happen to be installed beside it. They are not
+guaranteed to be, and you cannot add them either. The route above does not care,
+so prefer it. (`python3 -m pip install --user virtualenv` is not a way out of
+that: pip sees the system copy, reports "Requirement already satisfied",
+installs nothing, and leaves you with no `~/.local/bin/virtualenv`.)
 
 `psycopg2-binary` is deliberately absent. It exists only to read a local
 MusicBrainz mirror, and this host has neither a mirror nor a route to yours.
