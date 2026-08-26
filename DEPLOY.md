@@ -377,7 +377,8 @@ guard already turned away everything that did not come through the proxy.
 ```bash
 cd ~/newfire && git pull
 ~/newfire-venv/bin/pip install -U py4web  # only when it moved
-pkill -f "deploy/serve.py"                # cron restarts it within a minute
+pkill -f "deploy/serve.py"; sleep 5; pkill -9 -f "deploy/serve.py"
+pgrep -af "deploy/serve.py" || echo stopped
 ```
 
 There is no reload signal and no restart file: the process imported the old
@@ -385,6 +386,18 @@ code, so replacing it is the only way to pick up new code. Expect up to a
 minute of downtime while cron notices, and note that killing it also stops any
 label sync that was running -- the scheduler returns those runs to the queue on
 the next start, so nothing is lost but the work is redone.
+
+**`SIGTERM` is not enough, and that is why the `-9` is there.** Rocket3 catches
+it, stops accepting connections, and logs `Stopping Rocket3` -- then waits for
+every non-daemon thread to finish before the process can exit. The scheduler is
+one of those threads, running in this process by design, so the shutdown never
+completes and the process stays alive holding the flock. Cron then has nothing
+to do each minute, and the site keeps serving the code you were replacing.
+
+That failure is silent from every angle: the log's last line is a shutdown that
+looks successful, `crontab -l` is correct, and the only symptom is that your
+change did not take effect. Hence the `pgrep` after the kill -- confirm it is
+gone before waiting for cron, rather than discovering later that it never left.
 
 ### Shipping a re-seeded cache
 
@@ -403,7 +416,8 @@ rsync -avz seed/mbcache.db \
 
 ```bash
 # on the VPS
-pkill -f "deploy/serve.py"
+pkill -f "deploy/serve.py"; sleep 5; pkill -9 -f "deploy/serve.py"
+pgrep -af "deploy/serve.py" && echo "STILL RUNNING -- stop here"
 cd ~/newfire/apps/newfire/databases
 rm -f mbcache.db-wal mbcache.db-shm
 mv mbcache.db.new mbcache.db
@@ -411,10 +425,12 @@ mv mbcache.db.new mbcache.db
 
 The order is the whole procedure. **Copy alongside, then rename**, so the swap
 is one atomic `mv` rather than a minute of rsync writing into a database the app
-has open. **Kill first**, because `-wal` and `-shm` belong to the file they were
-written against: applying the old WAL to the new database is corruption rather
-than a stale read, and they can only be removed once nothing holds the database
-open. Then leave it alone -- cron restarts the server within a minute, and that
+has open. **Kill first, and confirm it died** -- see the restart note above,
+because a `pkill` that only logs `Stopping Rocket3` leaves the process holding
+this database open, and the next three lines then edit files underneath it.
+`-wal` and `-shm` belong to the file they were written against: applying the old
+WAL to the new database is corruption rather than a stale read, and they can
+only be removed once nothing holds the database open. Then leave it alone -- cron restarts the server within a minute, and that
 minute is the entire downtime.
 
 The `.table` files stay put, unlike the first deploy: the schema has not moved,
