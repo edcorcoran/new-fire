@@ -97,9 +97,9 @@ Settings worth knowing:
 A label nobody has looked at takes one request per hundred releases to fill, at
 one request a second. Fine for you, once. Not fine as a stranger's first
 impression. If you have a MusicBrainz Postgres mirror, seed from it instead. The
-69 labels below took **85 seconds** from a mirror; the same catalogue over the
-web service is 559 requests and at least ten minutes, all of it MusicBrainz's
-bandwidth rather than yours:
+636 labels below took **277 seconds** from a mirror; the same catalogue over the
+web service is some 1,450 requests and at least twenty-five minutes, all of it
+MusicBrainz's bandwidth rather than yours:
 
 ```bash
 export MB_DB_URI="postgres://musicbrainz:musicbrainz@your-mirror:5432/musicbrainz_db"
@@ -114,13 +114,25 @@ could not reach.
 
 `scripts/seed_labels.txt` is a starter list, meant to be edited. Seeding all of
 MusicBrainz is not an option — 278,000 labels carry 4.5M releases, some 2–3 GB
-of cache — so seeding is always a chosen list. The 69 labels shipped here are
-~56,000 releases and about 40 MB. Note the list records MBIDs, not names:
+of cache — so seeding is always a chosen list. The 636 labels shipped here are
+~144,000 releases and about 108 MB. Note the list records MBIDs, not names:
 resolving labels by name picks the wrong entity often enough to matter.
+
+The list is in four blocks: 69 hand-picked labels, then three generated from the
+mirror and cut back by hand — sibling imprints and roster-sharing labels of the
+first 69, labels in genres those 69 barely touch, and labels outside the US and
+UK, which 61 of the first 69 are. Ranking candidates by release count is what
+does not work: it returns lofi aggregators whatever you filter on, because the
+count measures upload rate. Each block records how its labels were found.
 
 **Seed cold.** A sync prunes releases its source no longer lists, and a mirror
 lags the live service, so seeding *over* a cache the app has already brought up
 to date will roll it back. Seed first, then let the app catch up.
+
+A seeded cache is only as current as the mirror that filled it, and a mirror is
+usually months behind — so a prewarmed cache ships stale by design. That is the
+trade it makes: the daily refresh closes the gap one label at a time over the
+web service, while every page renders from the first request.
 
 ## Tests
 

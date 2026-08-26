@@ -45,3 +45,7 @@ apps/newfire/settings_private.py
 # py4web's own bookkeeping: error tickets, migration metadata, and the
 # session secret that signs cookies. All generated, none of it ours.
 apps/.service/
+
+# Prewarmed cache built by scripts/seed_cache.py. A build artifact, and a
+# large binary: ship it out of band rather than committing it.
+seed/
