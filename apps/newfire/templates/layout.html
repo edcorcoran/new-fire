@@ -9,10 +9,16 @@
     <title>[[=globals().get('page_title') or 'new fire']]</title>
     <!-- The header mark. SVG first, so it stays sharp and follows the tab
          strip's light/dark; the ICO is the fallback for browsers that ignore
-         it. sizes="any" is what stops Chrome preferring the raster. -->
-    <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico" sizes="any">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+         it -- Safari is the one that matters there, having never rendered an
+         SVG favicon. sizes="any" is what stops Chrome preferring the raster.
+
+         Spelled out rather than left to the <base> above. Icon hrefs are the
+         one set of links a browser may resolve against the document URL
+         instead, and "favicon.ico" read against /label/<gid> is a 404 that
+         Safari then caches as "this site has no icon". -->
+    <link rel="icon" href="[[=URL('static', 'favicon.svg')]]" type="image/svg+xml">
+    <link rel="icon" href="[[=URL('static', 'favicon.ico')]]" sizes="any">
+    <link rel="apple-touch-icon" href="[[=URL('static', 'apple-touch-icon.png')]]">
     <link rel="stylesheet" href="css/newfire.css">
     [[block page_head]]<!-- individual pages can customize header here -->[[end]]
   </head>

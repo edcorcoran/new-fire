@@ -7,6 +7,9 @@ nobody has run before; release syncing is always handed to the scheduler, so no
 page ever blocks on a crawl. See docs/musicbrainz-cache-plan.md section 4.
 """
 
+import os
+
+from ombott import static_file
 from py4web import URL, abort, action, redirect, request
 from py4web.utils.url_signer import URLSigner
 
@@ -31,7 +34,12 @@ from .musicbrainz import (
     is_complete,
     search_labels,
 )
-from .settings import MB_CACHE_TTL_DAYS, MB_HIDE_LABEL_TYPES, MB_SEARCH_TTL_DAYS
+from .settings import (
+    APP_FOLDER,
+    MB_CACHE_TTL_DAYS,
+    MB_HIDE_LABEL_TYPES,
+    MB_SEARCH_TTL_DAYS,
+)
 from .tasks import queue_label_sync
 
 PAGE_SIZE = 24
@@ -344,3 +352,26 @@ def tracked():
         # The label filter is only meaningful where there is more than one.
         filter_labels=followed if len(followed) > 1 else None,
     )
+
+
+# The icons again, at the site root.
+#
+# The <link> tags in layout.html are the whole story for a tab icon, but not
+# for a bookmark: Safari fills its icon cache by probing /favicon.ico and
+# /apple-touch-icon.png directly, and what it finds -- or fails to find -- there
+# is what the bookmark, the Favorites bar and the Start Page tile show. Both
+# were 404 because this app serves everything it owns out of static/.
+#
+# Serving the bytes rather than redirecting into static/: a redirect is one
+# more thing for an icon fetch to get wrong, and these are two small files.
+STATIC_FOLDER = os.path.join(APP_FOLDER, "static")
+
+
+@action("favicon.ico")
+def favicon():
+    return static_file("favicon.ico", root=STATIC_FOLDER)
+
+
+@action("apple-touch-icon.png")
+def apple_touch_icon():
+    return static_file("apple-touch-icon.png", root=STATIC_FOLDER)
