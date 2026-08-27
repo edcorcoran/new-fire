@@ -156,10 +156,21 @@ class WebServiceSource(MBSource):
 
     @staticmethod
     def _retry_after(response, fallback):
-        """Honour Retry-After when the server sends a usable one."""
+        """
+        Honour Retry-After when the server sends a usable one, but never
+        below the fallback.
+
+        MusicBrainz answers some 503s with `Retry-After: 0`, which reads less
+        like "retry immediately" than like a header nobody filled in. Taking it
+        literally replaced the exponential backoff with no backoff at all and
+        spent the whole retry budget inside a couple of seconds -- exactly when
+        the service had just said it was struggling. Taking the larger of the
+        two honours a server asking for longer while ignoring one asking for
+        nothing.
+        """
         header = response.headers.get("Retry-After")
         if header and header.strip().isdigit():
-            return float(header.strip())
+            return max(float(header.strip()), fallback)
         return fallback
 
     # ----------------------------------------------------------------- MBSource
