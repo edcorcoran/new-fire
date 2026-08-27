@@ -67,6 +67,33 @@ def is_logging_server(server):
     return server == "logging" or server.startswith("logging:")
 
 
+# Fixed width on purpose. A mask as long as what it hides ("*" * len(password))
+# reports the password's length to anyone reading the log, which is a real help
+# to someone guessing it and no help at all to the person fixing the setting.
+MASK = "********"
+
+
+def redact_login(login):
+    """SMTP_LOGIN with the password removed, safe to put in an error or a log.
+
+    The username half stays, because it is the half worth seeing: shortening it
+    to the part before the @ is the most common way this setting is wrong, and
+    the mailbox address is not a secret. Everything after the first colon is
+    the password and goes behind the mask.
+
+    A value with no colon is masked whole. That case looks like the least
+    sensitive one and is the most: "username:password" with no colon in it is
+    usually a bare password pasted into the wrong shape, so the part that would
+    normally be safe to show is precisely the part that might be the secret.
+    """
+    if not login:
+        return login
+    if ":" not in login:
+        return MASK
+    username, _password = login.split(":", 1)
+    return "%s:%s" % (username, MASK)
+
+
 def build_mailer(settings, logger=None):
     """Return a Mailer for these settings, or None when email is switched off.
 
@@ -100,7 +127,8 @@ def build_mailer(settings, logger=None):
         if ":" not in login:
             raise RuntimeError(
                 'SMTP_LOGIN must be "username:password"; %r has no colon. On '
-                "most hosts the username is the full mailbox address." % login
+                "most hosts the username is the full mailbox address."
+                % redact_login(login)
             )
 
     mailer = Mailer(

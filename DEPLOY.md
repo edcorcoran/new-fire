@@ -47,7 +47,9 @@ forwards, so anything arriving without them did not come through the proxy, and
 `deploy/serve.py` answers it 403 before py4web sees it. That is a weaker
 guarantee than a closed port -- the headers can be forged by anyone who knows
 the address -- but it covers what actually finds an open port: scanners,
-crawlers, and anyone who reads the address off a DNS record.
+crawlers, and anyone who reads the address off a DNS record. `NEWFIRE_PROXY_IPS`
+closes most of the rest by requiring the connection's source address to be the
+proxy's as well; it is off by default, and step 6 says how to set it safely.
 
 Because we own this process rather than having it spawned on demand, the
 scheduler runs **inside it**, as it does in development -- the arrangement the
@@ -59,9 +61,11 @@ The web tier is `deploy/serve.py`, which `deploy/serve.sh` execs and cron runs.
 It is plain `py4web run` -- what development uses -- plus the guard above and one
 more wrapper: behind a TLS-terminating proxy the app sees plain HTTP, which would
 cost the session cookie its `Secure` flag, so serve.py sets `X-Forwarded-Proto`
-before py4web looks at the scheme. Assuming HTTPS is safe there because the guard
-ran first, and nothing reaches the app except through the proxy that holds the
-certificate. Step 6 verifies both.
+before py4web looks at the scheme. It sets it outright rather than deferring to
+an incoming header, because nothing that reaches the app got there in the clear:
+the guard ran first, port 80 is redirected to https at the vhost before anything
+is proxied, and the proxy that forwarded the request is the one holding the
+certificate. Step 6 verifies both wrappers.
 
 ## Server layout
 
@@ -389,11 +393,77 @@ proxy does not send the headers `PROXY_HEADERS` in serve.py looks for. Read one
 of Apache's forwarded requests in `~/newfire-logs/newfire.log` to see which
 headers actually arrive, and widen that tuple to match.
 
-The third should show `HttpOnly`, `SameSite=Lax` and `Secure` together. `Secure`
-is the one at risk: py4web takes it from the request scheme, and behind TLS
-termination the app sees plain HTTP. serve.py's `trust_proxy` supplies
-`X-Forwarded-Proto` so ombott reports HTTPS -- which is only honest because the
-guard already turned away everything that did not come through the proxy.
+The third should show `HttpOnly`, `SameSite=Lax` and `Secure` together, and
+`Secure` is the one to actually look for. py4web takes it from the request
+scheme, and behind TLS termination the app sees plain HTTP, so without
+`trust_proxy` setting `X-Forwarded-Proto` the session cookie would go out
+without it -- no error, no log line, just a cookie that will be sent over the
+next plaintext request to the domain.
+
+`trust_proxy` **overwrites** that header rather than deferring to an incoming
+one, which is worth knowing when reading the output above: a `Secure` in that
+line says the wrapper ran, not that anything upstream agreed. Overwriting is
+the honest reading here because no plaintext request can reach the app to be
+misdescribed -- the vhost answers port 80 with a 301 to https before proxying
+anything, and the guard refuses whatever did not come through the proxy at all.
+Confirm the first half of that if you have changed the domain's settings:
+
+```bash
+curl -sI http://newfire.music/ | head -1        # expect 301, not 200
+```
+
+A 200 there means plain HTTP is being served rather than redirected, and the
+reasoning above no longer holds: fix the redirect in the panel.
+
+### Pinning the proxy's address
+
+`NEWFIRE_PROXY_IPS` is an optional tightening of the guard, off by default. The
+guard as described above is a header check, and headers can be forged by anyone
+willing to send an `X-Forwarded-For`. The connection's source address cannot be:
+it belongs to a TCP handshake that completed, so a forged one never gets as far
+as sending a request. Set the variable and both have to be right.
+
+Find the address the proxy actually dials in from, on the VPS, while a request
+is in flight:
+
+```bash
+curl -sI https://newfire.music/ >/dev/null &    # or just load the site
+ss -tn '( sport = :8123 )'                      # on the VPS
+```
+
+The `Peer Address:Port` column is the proxy's source address. Take the address,
+drop the port.
+
+**Not from a log.** The app writes no access log -- Rocket3 logs request lines
+at `INFO` and py4web leaves the root logger at `WARNING`, so
+`~/newfire-logs/newfire.log` holds startup output and tracebacks and nothing per
+request. Apache's own `~/logs/newfire.music/http/access.log` does exist, but it
+records the *visitor's* address, not the address Apache then connects to the
+backend from, so it is the wrong number however convenient it looks.
+
+Then set it in `deploy/serve.sh`, which is where cron will actually see it, and
+restart:
+
+```sh
+export NEWFIRE_PROXY_IPS="${NEWFIRE_PROXY_IPS:-203.0.113.10}"
+```
+
+```bash
+pkill -f "deploy/serve.py"; sleep 5; pkill -9 -f "deploy/serve.py"
+# wait for cron, then check both halves
+grep 'newfire serving' ~/newfire-logs/newfire.log | tail -1   # names the allowlist
+curl -sI https://newfire.music/ | head -1                     # expect 200
+```
+
+The startup line reads `(proxy required from 203.0.113.10)` when the variable
+took effect, which is the only place the value is echoed back.
+
+**A wrong value 403s every request**, including yours, which is why this is
+opt-in and why the `curl` above matters. It is also why the address is worth
+re-checking after DreamHost moves the site between servers: nothing warns you,
+and the symptom is a site that has gone uniformly Forbidden. Backing out is
+emptying the variable and restarting -- the guard returns to the header check,
+which is where it started.
 
 ## Deploying an update
 
