@@ -181,16 +181,24 @@ apps/newfire/
     ratelimit.py        cross-process rate limiter
 scripts/seed_cache.py   build a prewarmed cache from a mirror
 tests/                  cache-layer tests; see "Tests" above
-deploy/                 Passenger and cron entry points; see DEPLOY.md
+deploy/                 proxy-facing server and cron entry points; see DEPLOY.md
 docs/                   the design study
 ```
 
 ## Deploying
 
-[DEPLOY.md](DEPLOY.md) covers the live deployment: a Passenger web tier that only
-enqueues work, and a single cron-supervised worker that runs it. The split
-exists because the application server owns the lifetime of its web processes,
-which is the wrong shape for a queue that has to run overnight.
+[DEPLOY.md](DEPLOY.md) covers the live deployment: one long-lived process that
+serves the pages and runs the scheduler, kept alive by cron and `flock`.
+DreamHost withdrew Passenger, so the supported shape there is now their Proxy
+Server -- Apache `mod_proxy` in front of a port you keep running yourself. That
+turns out to suit this app: because nothing spawns the process on demand,
+nothing owns its lifetime either, and the scheduler can live inside it exactly
+as it does in development. `deploy/worker.sh` still runs the queue as its own
+process if that is ever wanted; the live deployment does not use it.
+
+The proxy connects to the server's public address rather than to loopback, so
+the port it binds is open to the internet, and `deploy/serve.py` refuses
+anything that did not arrive through the proxy.
 
 ## Notes for anyone changing this
 

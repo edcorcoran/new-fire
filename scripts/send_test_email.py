@@ -61,18 +61,20 @@ def load_app_module(name):
     return module
 
 
-def describe(settings):
-    """The configuration as the app sees it, with the password withheld."""
-    login = settings.SMTP_LOGIN
-    if login and ":" in login:
-        username, password = login.split(":", 1)
-        shown = "%s:%s" % (username, "*" * len(password))
-    else:
-        shown = login
+def describe(settings, redact_login):
+    """The configuration as the app sees it, with the password withheld.
+
+    Redacting is the mailer's own `redact_login`, passed in rather than
+    reimplemented, so what this prints and what the app's error says are the
+    same rule. The masking used to cover only the branch with a colon in it,
+    which left the one case that matters -- a bare password pasted where
+    "username:password" belongs -- printed in full to whatever terminal or log
+    was watching.
+    """
     return [
         ("SMTP_SERVER", settings.SMTP_SERVER),
         ("SMTP_SENDER", settings.SMTP_SENDER),
-        ("SMTP_LOGIN", shown),
+        ("SMTP_LOGIN", redact_login(settings.SMTP_LOGIN)),
         ("SMTP_SSL", settings.SMTP_SSL),
         ("SMTP_TLS", settings.SMTP_TLS),
         ("SMTP_TIMEOUT", settings.SMTP_TIMEOUT),
@@ -130,7 +132,7 @@ def main():
     settings = load_app_module("settings")
     mailer_module = load_app_module("mailer")
 
-    for key, value in describe(settings):
+    for key, value in describe(settings, mailer_module.redact_login):
         print("%-13s %s" % (key, value))
     print()
 

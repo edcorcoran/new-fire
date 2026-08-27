@@ -7,7 +7,8 @@ to loopback, so the port this binds is reachable from the whole internet.
 
   require_proxy   refuses anything that did not arrive through the proxy, which
                   is what keeps a plain-HTTP copy of the site off the public
-                  port even though the port itself is open.
+                  port even though the port itself is open. Optionally also
+                  pins the connection's source address -- see PROXY_IPS.
   trust_proxy     tells the app it was reached over HTTPS, so the session
                   cookie keeps its Secure flag behind TLS termination.
 
@@ -34,13 +35,32 @@ REQUIRE_PROXY = os.environ.get("NEWFIRE_REQUIRE_PROXY", "1") == "1"
 
 # What Apache's mod_proxy_http adds on the way through. Any one of them means
 # the request came via the proxy; a request straight to the public port has
-# none of them. ProxyAddHeaders defaults to On, which is what makes this work,
-# and X_FORWARDED_PROTO is checked before trust_proxy invents one.
+# none of them. ProxyAddHeaders defaults to On, which is what makes this work.
+# X_FORWARDED_PROTO is listed for completeness rather than because Apache sends
+# it -- ProxyAddHeaders does not -- and require_proxy reads the request as it
+# arrived, before trust_proxy sets that header itself.
 PROXY_HEADERS = (
     "HTTP_X_FORWARDED_FOR",
     "HTTP_X_FORWARDED_HOST",
     "HTTP_X_FORWARDED_SERVER",
     "HTTP_X_FORWARDED_PROTO",
+)
+
+# The addresses the proxy dials in from, comma-separated. Empty by default, and
+# empty means the header check above stands alone -- this is a second gate on
+# require_proxy, never a replacement for it. Unlike the headers, a source
+# address cannot be forged on a request that completed a TCP handshake, so
+# setting this turns a guard anyone can talk their way past into one that also
+# has to be reached from the right machine.
+#
+# Off by default on purpose: the failure mode of a wrong value is every request
+# to the site answering 403, which is a worse day than the weakness it closes.
+# DEPLOY.md, "Pinning the proxy's address", says how to read the right value off
+# the running server before trusting it.
+PROXY_IPS = frozenset(
+    ip.strip()
+    for ip in os.environ.get("NEWFIRE_PROXY_IPS", "").split(",")
+    if ip.strip()
 )
 
 sys.path.insert(0, CHECKOUT)
@@ -64,10 +84,23 @@ def require_proxy(app):
     crawlers, and anyone who reads the IP off a DNS record. It also keeps
     trust_proxy honest, since by the time that runs, HTTPS is no longer an
     assumption about the network but a fact about the request.
+
+    Setting NEWFIRE_PROXY_IPS closes most of that gap. REMOTE_ADDR is the far
+    end of the TCP connection, filled in by Rocket3 from the accepted socket
+    rather than read out of the request, so a client cannot claim someone
+    else's -- an attacker who spoofed it would never see the handshake finish,
+    let alone send a request. Requiring it to be the proxy's address *as well
+    as* the headers means forging the headers is no longer enough; you would
+    have to be on the machine the proxy runs on. It is additional and opt-in,
+    so with the variable unset this behaves exactly as it always has.
     """
 
     def wrapped(environ, start_response):
-        if not any(header in environ for header in PROXY_HEADERS):
+        forwarded = any(header in environ for header in PROXY_HEADERS)
+        # An empty allowlist waves everything through here, which is what keeps
+        # the address check strictly additional.
+        from_allowed_address = not PROXY_IPS or environ.get("REMOTE_ADDR") in PROXY_IPS
+        if not forwarded or not from_allowed_address:
             body = b"This site is served over HTTPS at its domain.\n"
             start_response(
                 "403 Forbidden",
@@ -82,24 +115,53 @@ def require_proxy(app):
     return wrapped
 
 
-def trust_proxy(app):
+def trust_proxy(app, force=REQUIRE_PROXY):
     """
     Tell the app it is being reached over HTTPS.
 
     py4web sets the Secure flag on the session cookie from the request scheme,
     and ombott reads HTTP_X_FORWARDED_PROTO before falling back to the WSGI
-    scheme -- so behind a TLS-terminating proxy that forwards the header, this
-    is already correct. It is a setdefault rather than an assignment for exactly
-    that reason: a proxy that says so is believed.
+    scheme. Behind TLS termination the app is spoken to in plain HTTP, so this
+    header is the only thing between the session cookie and being issued
+    without Secure -- and a cookie that loses Secure is offered up on the first
+    plaintext request to the domain.
 
-    The default covers a proxy that stays silent, which would otherwise drop the
-    Secure flag with no error and no visible symptom. Assuming HTTPS is safe
-    because require_proxy has already run: anything reaching this wrapper came
-    through the proxy, and the proxy is where the certificate lives.
+    This was a setdefault, on the reasoning that a proxy which sends the header
+    should be believed. What that misses is which way the failure falls. A
+    proxy sending "X-Forwarded-Proto: http" would take the Secure flag off,
+    silently, with no error and nothing in the log -- so the deferential
+    reading of the header is also the dangerous one.
+
+    Deferring would only be right if a plaintext request could arrive here at
+    all, and on this host none can:
+
+      - Apache adds X-Forwarded-For, -Host and -Server (ProxyAddHeaders sets
+        those three) and *not* -Proto, so nothing upstream is currently
+        expressing an opinion for us to defer to.
+      - The panel's vhost answers port 80 with a 301 to https before it proxies
+        anything. Verified against the live site: `curl -sI http://newfire.music/`
+        is `301 Moved Permanently` from Apache, on `/` and on deeper paths, so
+        a request that reached the proxy in the clear is redirected rather than
+        forwarded, and never becomes a request to this process.
+      - require_proxy has already refused anything that did not come through
+        the proxy.
+
+    So every request that gets here arrived at the proxy over TLS, and "https"
+    is a fact about the request rather than a guess about the network. The
+    header is overwritten accordingly.
+
+    It is scoped to the guard, though, because the guard is what establishes
+    all of the above. With NEWFIRE_REQUIRE_PROXY=0 this process may be talking
+    to anyone, none of that reasoning holds, and this falls back to the old
+    setdefault -- which is also what keeps development on loopback behaving as
+    it did.
     """
 
     def wrapped(environ, start_response):
-        environ.setdefault("HTTP_X_FORWARDED_PROTO", "https")
+        if force:
+            environ["HTTP_X_FORWARDED_PROTO"] = "https"
+        else:
+            environ.setdefault("HTTP_X_FORWARDED_PROTO", "https")
         return app(environ, start_response)
 
     return wrapped
@@ -122,5 +184,9 @@ if __name__ == "__main__":
         served = require_proxy(served)
 
     guard = "proxy required" if REQUIRE_PROXY else "UNGUARDED"
+    if REQUIRE_PROXY and PROXY_IPS:
+        # Printed so a typo in NEWFIRE_PROXY_IPS is one line in the log rather
+        # than a site that 403s everything for no stated reason.
+        guard += " from " + ", ".join(sorted(PROXY_IPS))
     print(f"newfire serving on http://{HOST}:{PORT} ({guard})", flush=True)
     Rocket3((HOST, PORT), "wsgi", dict(wsgi_app=served)).start()
