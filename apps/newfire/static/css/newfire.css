@@ -119,7 +119,7 @@ body {
   border-radius: 8px;
   font-size: 0.92rem;
   color: var(--muted);
-  max-width: 190px;
+  max-width: 22ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -542,6 +542,25 @@ tbody tr:hover { background: var(--surface); }
 }
 .auth-container label { display: block; margin: 14px 0 6px; font-size: 0.88rem; color: var(--muted); }
 .auth-container input[type="submit"], .auth-container button { width: 100%; margin-top: 20px; }
+
+/* py4web appends the sidecar links ("Sign Up", "Lost Password") as bare
+   siblings of the submit input inside the same unclassed <div>, with no
+   whitespace between them -- so they render as one run of text. Make that div
+   a wrapping flex row: the full-width submit keeps the first line to itself
+   and the links drop below it, pushed to opposite ends. */
+.auth-container form div:has(> input[type="submit"]) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 14px;
+}
+.auth-container form div:has(> input[type="submit"]) > input[type="submit"] {
+  flex: 0 0 100%;
+}
+.auth-container a[role="button"] { font-size: 0.88rem; }
+/* Fallback for browsers without :has() -- the full-width submit already forces
+   the links onto their own line, so all they are missing is a gap. */
+.auth-container a[role="button"] + a[role="button"] { margin-left: 14px; }
 .py4web-validation-error { display: block; margin-top: 6px; font-size: 0.82rem; color: #e5484d; }
 
 /* ------------------------------------------------------------------ flash */
@@ -614,7 +633,7 @@ flash-alerts .close:hover { color: var(--text); }
   .release-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .header-inner { gap: 10px; }
   .site-nav a { padding: 7px 9px; }
-  .menu > summary { max-width: 44px; }
+  .menu > summary { max-width: 10ch; }
 }
 
 @media (prefers-reduced-motion: reduce) {
