@@ -17,6 +17,14 @@ export NEWFIRE_PORT="${NEWFIRE_PORT:-8123}"
 export NEWFIRE_REQUIRE_PROXY="${NEWFIRE_REQUIRE_PROXY:-1}"
 export NEWFIRE_CHECKOUT="$CHECKOUT"
 
+# Optional second gate beside the header check: the address the proxy connects
+# from, comma-separated. Empty is the default and means header-only, which is
+# what this has always done. Set it here rather than in a shell, since cron runs
+# serve.sh with almost no environment. A wrong value answers 403 to the entire
+# site, so read the real address off the running server first -- DEPLOY.md,
+# "Pinning the proxy's address".
+export NEWFIRE_PROXY_IPS="${NEWFIRE_PROXY_IPS:-}"
+
 # serve.py rather than `py4web run`: same app, same scheduler (it starts when
 # the app is imported), plus the two wrappers a public port needs. It passes
 # app_names="_default" itself, which is what stops py4web importing the app
