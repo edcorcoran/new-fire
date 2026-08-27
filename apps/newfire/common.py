@@ -17,9 +17,9 @@ from py4web import DAL, Cache, Field, Session, Translator
 from py4web.server_adapters.logging_utils import make_logger
 from py4web.utils.auth import Auth
 from py4web.utils.factories import ActionFactory
-from py4web.utils.mailer import Mailer
 
 from . import settings
+from .mailer import build_mailer
 from .musicbrainz import apply_sqlite_pragmas, connect_cache
 from .musicbrainz.factory import POSTGRES, WEBSERVICE, build_source, build_user_agent
 from .scheduling import ResilientScheduler
@@ -162,15 +162,14 @@ flash = auth.flash
 
 # #######################################################
 # Configure email sender for auth
+#
+# None when SMTP_SERVER is unset, which is a configuration rather than a
+# failure: auth then prints the message it would have sent to stdout, so
+# registration works and only password resets go nowhere. build_mailer draws the
+# line between that and a half-written configuration, which stops the app here
+# rather than inside a reset request; see mailer.py.
 # #######################################################
-if settings.SMTP_SERVER:
-    auth.sender = Mailer(
-        server=settings.SMTP_SERVER,
-        sender=settings.SMTP_SENDER,
-        login=settings.SMTP_LOGIN,
-        tls=settings.SMTP_TLS,
-        ssl=settings.SMTP_SSL,
-    )
+auth.sender = build_mailer(settings, logger=logger)
 
 # #######################################################
 # Define the scheduler

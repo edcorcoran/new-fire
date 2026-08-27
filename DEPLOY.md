@@ -194,15 +194,38 @@ cat > ~/newfire/apps/newfire/settings_private.py <<'EOF'
 MB_SOURCE = "webservice"
 MB_USER_AGENT_CONTACT = "https://newfire.music"
 
-# No SMTP configured yet — see "Before you announce it".
+# Mail leaves through a DreamHost mailbox. Port 465 is implicit SSL, which is
+# SMTP_SSL rather than SMTP_TLS -- they are alternatives, not layers. The login
+# username is the full address, not the part before the @.
+SMTP_SERVER = "smtp.dreamhost.com:465"
+SMTP_SENDER = "new fire <noreply@newfire.music>"
+SMTP_LOGIN = "noreply@newfire.music:PASSWORD-GOES-HERE"
+SMTP_SSL = True
+
+# Mail is for password resets only; registration stays instant.
 VERIFY_EMAIL = False
 LOGIN_AFTER_REGISTRATION = True
 EOF
+chmod 600 ~/newfire/apps/newfire/settings_private.py
 ```
 
 Leave `MB_DB_URI` out. The value in the development copy is a LAN address this
 host cannot reach, and pointing the app at an unreachable mirror fails at sync
 time rather than at startup.
+
+Create the mailbox before the file: DreamHost panel -> **Mail** -> **Manage
+Email**, add `noreply@newfire.music` as a full mailbox on this domain. Then put
+its password into `SMTP_LOGIN` **with an editor**, not by retyping the heredoc
+above -- a password typed at a shell prompt is a line in `~/.bash_history` for
+as long as that file lives, and this one can send mail as the site. The
+`chmod 600` matters for the same reason; the file is otherwise world-readable on
+a machine that has other users.
+
+The three SMTP names are all it takes: `common.py` builds the sender at import
+and checks it there, so a missing `SMTP_SENDER` or a `SMTP_LOGIN` without its
+colon stops the app the same visible way a missing `MB_USER_AGENT_CONTACT` does,
+rather than waiting to throw inside somebody's password reset. Leaving
+`SMTP_SERVER` unset is still a valid choice -- see "Before you announce it".
 
 **3. Seed the cache.** From your Mac, against the mirror, and *before* the
 app has ever run on the server — a sync prunes releases its source no longer
@@ -462,14 +485,35 @@ opens it.
 - **The cache is disposable, `storage.db` is not.** `tracked_label` is the only
   irreplaceable data on the box. Back that one file up; `mbcache.db` rebuilds
   from either source.
+- **A mail failure is a 500, not a shrug.** py4web's Mailer re-raises whatever
+  the SMTP conversation threw and auth does not catch it, so a wrong mailbox
+  password turns the password reset form into an error page, with the reason in
+  the web log. That is the configured case. With `SMTP_SERVER` unset there is no
+  sender at all and auth prints the message it *would* have sent -- reset link
+  included -- so a reset can still be rescued by hand out of the log.
 
 ## Before you announce it
 
-- **SMTP is not configured**, so password resets silently cannot work — the form
-  accepts the request and no mail is sent. Registration is unaffected because
-  `VERIFY_EMAIL = False`. Set `SMTP_SERVER`, `SMTP_LOGIN` and `SMTP_SENDER` in
-  `settings_private.py` against your DreamHost mailbox, or accept that a
-  forgotten password means a manual fix.
+- **Prove SMTP works before anyone needs it.** Mail is the one path nothing
+  exercises until a stranger has locked themselves out, and every way it breaks
+  is a setting: wrong port for the TLS mode, username shortened to the part
+  before the @, a mailbox that was never created. Send yourself one message
+  instead of finding out then.
+
+  ```bash
+  ~/newfire-venv/bin/python ~/newfire/scripts/send_test_email.py you@example.com
+  ```
+
+  It builds the sender exactly as the app does, prints the configuration with
+  the password masked, and on failure names the likely cause rather than leaving
+  you with an SMTP error code. Accepted is not delivered, though: check the
+  inbox, and its spam folder — mail from a domain that has never sent any is
+  treated with suspicion for a while. If it lands in spam and stays there, that
+  is an SPF/DKIM question for the DreamHost panel, not an app setting.
+
+  Skipping SMTP entirely is still a defensible choice for a site this size — see
+  the operating note on what unconfigured mail does — but then a forgotten
+  password is a manual fix, so decide it rather than discover it.
 - **Registration is open** to anyone with the URL, with no email verification.
   That is the right default for this app, but it is a decision rather than an
   accident.
