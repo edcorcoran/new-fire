@@ -10,7 +10,50 @@ scripts/send_test_email.py loads this module by itself and gets the same Mailer
 the running app would have built.
 """
 
+import email.charset
+import email.encoders
+import email.header
+
+from py4web.utils import mailer as py4web_mailer
 from py4web.utils.mailer import Mailer
+
+# Names py4web's own mailer module uses but, as of 1.20260805.0, no longer
+# imports. They arrived through `from pydal._compat import *`, which that
+# release dropped -- it had to, because pydal 3 removed _compat entirely -- and
+# nothing replaced them. Their values here are the stdlib originals that
+# _compat was itself re-exporting, so restoring them puts back exactly what was
+# there rather than substituting anything.
+COMPAT_NAMES = {
+    "add_charset": email.charset.add_charset,
+    "charset_QP": email.charset.QP,
+    "Header": email.header.Header,
+    "Encoders": email.encoders,
+}
+
+
+def restore_compat_names():
+    """Repair py4web's mailer module in place; return the names restored.
+
+    Worth doing rather than pinning around, because of where the breakage sits:
+    add_charset is called on the opening line of Mailer.send(), so on an
+    affected release *every* send raises NameError before a socket is opened --
+    the "logging" pseudo-server included. Nothing catches it, so it surfaces as
+    a 500 on the password reset form, and only once a real person has needed
+    one. Meanwhile the release installs and the app runs perfectly.
+
+    Guarded by hasattr, so this is a no-op on releases that still define them,
+    and the whole function can be deleted once every machine that matters is
+    past the fix.
+    """
+    restored = []
+    for name, value in COMPAT_NAMES.items():
+        if not hasattr(py4web_mailer, name):
+            setattr(py4web_mailer, name, value)
+            restored.append(name)
+    return restored
+
+
+PATCHED_COMPAT_NAMES = restore_compat_names()
 
 
 def is_logging_server(server):
@@ -75,4 +118,12 @@ def build_mailer(settings, logger=None):
         # "logging" mode the entire message -- lands wherever logging's
         # last-resort handler points rather than where LOGGERS says.
         mailer.settings.logger = logger
+        if PATCHED_COMPAT_NAMES:
+            # Said once per process, so that the day this stops appearing is
+            # the day restore_compat_names can go.
+            logger.warning(
+                "py4web's mailer is missing %s; restored from the stdlib. See "
+                "restore_compat_names in mailer.py.",
+                ", ".join(PATCHED_COMPAT_NAMES),
+            )
     return mailer
