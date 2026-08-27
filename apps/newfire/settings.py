@@ -149,12 +149,38 @@ LOGIN_AFTER_REGISTRATION = False
 # Note: if you add "login", add also "logout"
 ALLOWED_ACTIONS = ["all"]
 
-# email settings
-SMTP_SSL = False
+# Email settings. None of these is a working configuration on purpose: mail
+# leaves through a real mailbox whose password cannot live in git, so turning
+# email on means setting SMTP_SERVER, SMTP_SENDER and SMTP_LOGIN in
+# settings_private.py. Until then auth still works -- py4web prints the message
+# it would have sent to the server's stdout -- so registration is unaffected and
+# only password resets go nowhere.
+#
+# SMTP_SERVER is "host:port". The mailbox this deployment sends through wants
+# implicit SSL on 465: SMTP_SSL = True, and SMTP_TLS is then ignored. A provider
+# offering STARTTLS on 587 instead is the mirror image, SMTP_SSL = False with
+# SMTP_TLS = True. They are alternatives rather than layers -- Mailer skips
+# STARTTLS entirely when SSL is on -- and setting both is not more secure, it is
+# just the SSL one.
+#
+# "logging" is also a valid SMTP_SERVER, and is what development uses: the
+# message is written to the log instead of a socket, so a reset link is readable
+# in the terminal without a mailbox password existing on the machine.
 SMTP_SERVER = None
-SMTP_SENDER = "you@example.com"
-SMTP_LOGIN = "username:password"
+SMTP_SENDER = None
+# "username:password", split on the first colon only -- so the password may
+# contain colons and the username may not. On most hosts the username is the
+# full mailbox address.
+SMTP_LOGIN = None
+SMTP_SSL = True
 SMTP_TLS = False
+
+# Seconds allowed for the whole SMTP conversation. py4web's Mailer defaults this
+# to 5, which is under the round trip to a remote mailbox on a slow day: connect,
+# SSL handshake, AUTH, then the message. It matters because a send that fails
+# raises out of the action that triggered it -- the password reset form 500s
+# rather than shrugging -- so the timeout is a user-visible error, not a retry.
+SMTP_TIMEOUT = 30
 
 # session settings: "cookies" (signed with the generated apps/.service secret)
 # or "database" (server-side, stored in db)
