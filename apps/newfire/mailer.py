@@ -1,0 +1,78 @@
+"""
+Builds the Mailer that auth sends through, and decides what counts as a complete
+SMTP configuration.
+
+Its own module rather than a few lines in common.py so the configuration can be
+checked without booting the app: importing the newfire package pulls in
+controllers, models and the scheduler, which is a great deal of machinery to
+stand up only to find out whether a password is right.
+scripts/send_test_email.py loads this module by itself and gets the same Mailer
+the running app would have built.
+"""
+
+from py4web.utils.mailer import Mailer
+
+
+def is_logging_server(server):
+    """True for the pseudo-servers that write the message instead of sending it.
+
+    py4web accepts both the bare word and "logging:/path/to/file". Neither opens
+    a socket, so neither needs credentials -- which is the whole reason
+    development can run with email switched on and no mailbox password on the
+    machine.
+    """
+    return server == "logging" or server.startswith("logging:")
+
+
+def build_mailer(settings, logger=None):
+    """Return a Mailer for these settings, or None when email is switched off.
+
+    Raises RuntimeError on a half-written configuration. Raising here means
+    failing at import, which is loud in the way this app already fails on a
+    missing MB_USER_AGENT_CONTACT: py4web logs the traceback and serves 404 for
+    every path, so the problem is found immediately and by whoever caused it.
+    The alternative is strictly worse. py4web's Mailer re-raises whatever the
+    SMTP conversation threw, and auth does not catch it, so a Mailer built from
+    half a configuration fails inside the password reset action instead -- a 500
+    in front of the one person who by definition cannot log in to report it.
+    """
+    server = settings.SMTP_SERVER
+    if not server:
+        return None
+
+    if not settings.SMTP_SENDER:
+        raise RuntimeError(
+            "SMTP_SENDER must be set when SMTP_SERVER is: it is the From address "
+            "on password reset mail. Set it in settings_private.py."
+        )
+
+    login = settings.SMTP_LOGIN
+    if not is_logging_server(server):
+        if not login:
+            raise RuntimeError(
+                "SMTP_LOGIN must be set when SMTP_SERVER is %r. Set it in "
+                "settings_private.py, or use SMTP_SERVER = 'logging' to write "
+                "mail to the log instead of sending it." % server
+            )
+        if ":" not in login:
+            raise RuntimeError(
+                'SMTP_LOGIN must be "username:password"; %r has no colon. On '
+                "most hosts the username is the full mailbox address." % login
+            )
+
+    mailer = Mailer(
+        server=server,
+        sender=settings.SMTP_SENDER,
+        login=login,
+        tls=settings.SMTP_TLS,
+        ssl=settings.SMTP_SSL,
+    )
+    # Mailer hardcodes 5 seconds, which is under the round trip to a remote
+    # mailbox having a slow day.
+    mailer.settings.timeout = settings.SMTP_TIMEOUT
+    if logger is not None:
+        # Mailer otherwise logs through the root logger, so a failure -- and in
+        # "logging" mode the entire message -- lands wherever logging's
+        # last-resort handler points rather than where LOGGERS says.
+        mailer.settings.logger = logger
+    return mailer
