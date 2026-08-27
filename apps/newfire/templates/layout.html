@@ -32,7 +32,11 @@
           [[if globals().get('user'):]]
           <a href="[[=URL('tracked')]]">Following</a>
           <details class="menu">
-            <summary>[[=globals().get('user',{}).get('email')]]</summary>
+            [[u = globals().get('user') or {}]]
+            <!-- Username, not email: auth.use_username is on, so every
+                 account has one, and it is the short, stable label. The
+                 email is the fallback for rows predating that. -->
+            <summary>[[=u.get('username') or u.get('email')]]</summary>
             <div class="menu-panel">
               <a href="[[=URL('auth/profile')]]">Edit profile</a>
               <a href="[[=URL('auth/change_password')]]">Change password</a>
