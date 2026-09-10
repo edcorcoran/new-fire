@@ -91,6 +91,8 @@ Settings worth knowing:
 | `MB_FULL_RESYNC_DAYS` | How often a label is re-read in full regardless |
 | `MB_HIDE_LABEL_TYPES` | Label types hidden from search; `None` uses the default |
 | `MB_CLEANUP_PERIOD` | How often unreachable cache rows are collected |
+| `APPLE_MATCH_ENABLED` | Whether to look for Apple Music links MusicBrainz lacks |
+| `APPLE_MATCH_MAX_LOOKUPS` | Most searches one weekly sweep may make |
 
 ## Seeding the cache
 
@@ -156,6 +158,7 @@ The scheduler runs three tasks, all registered in `apps/newfire/tasks.py`:
 | `mb_sync_label` | On demand | Pulls one label's releases into the cache |
 | `mb_refresh_tracked` | Daily | Checks each followed label for new releases |
 | `mb_cleanup_cache` | Weekly | Drops unreachable rows and vacuums |
+| `mb_find_links` | Weekly | Looks for Apple Music links MusicBrainz lacks |
 
 The daily sweep is cheap by design: asking whether a label changed is one
 request, and only labels that moved are re-read.
@@ -173,13 +176,17 @@ apps/newfire/
     sources.py          MBSource interface + Postgres mirror
     webservice.py       the live MusicBrainz API
     normalize.py        the record shape both sources emit
+    applemusic.py       searching Apple for links MusicBrainz lacks
     cache.py            SQLite cache schema
+    discovered.py       links this app found, and their cache projection
     writer.py           syncing and upserts
     reader.py           what the pages read, including grouping and filters
     service.py          search, and deciding when a sync is due
     maintenance.py      cache cleanup
     ratelimit.py        cross-process rate limiter
 scripts/seed_cache.py   build a prewarmed cache from a mirror
+scripts/import_discovered_links.py
+                        load reviewed streaming-link matches
 tests/                  cache-layer tests; see "Tests" above
 deploy/                 proxy-facing server and cron entry points; see DEPLOY.md
 docs/                   the design study
@@ -203,8 +210,25 @@ anything that did not arrive through the proxy.
 ## Notes for anyone changing this
 
 - **The cache is disposable.** It is rebuildable from either source and holds no
-  user data; the only thing that would hurt to lose is `tracked_label` in
-  `storage.db`. Keep it that way.
+  user data; the things that would hurt to lose are `tracked_label` and
+  `discovered_link` in `storage.db`. Keep it that way.
+- **The link matcher runs unattended, and that sets its standard.** Nothing it
+  finds is reviewed before it appears on a page, so `applemusic.py` accepts a
+  match only when the normalized titles are equal, the artists agree and the
+  release years are within a year -- all three. Albums and EPs only: most
+  releases missing an Apple link are advance singles that Apple carries only as
+  a track on the parent album, so searching for them finds confident-looking
+  nonsense. What makes unattended matching acceptable at all is the blast
+  radius: a wrong link is a bad link on one card of this app. None of it is
+  offered to MusicBrainz, where a wrong link would be everyone's problem, and
+  that is a separate decision with a separate standard of evidence.
+- **Found links live outside the cache.** MusicBrainz is missing a lot of Apple
+  Music links, and the ones this app finds for itself are kept in
+  `discovered_link` and *projected* into `mb_release_url` after each sync --
+  because `_replace_release_urls` rebuilds a release's links wholesale, anything
+  written straight into the cache is gone at the next refresh. The projection is
+  idempotent, and a link MusicBrainz later publishes collapses with the found one
+  rather than doubling the row. See `musicbrainz/discovered.py`.
 - **Everything is keyed on MBIDs.** MusicBrainz's integer ids are not stable
   across mirror rebuilds and the web service does not expose them.
 - **Sync order is undefined until a label is complete.** The browse endpoint

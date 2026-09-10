@@ -7,9 +7,24 @@ City is 13 rate-limited requests, roughly half a minute, and Ninja Tune is
 twice that.
 """
 
+import datetime
 import threading
 
 from .common import build_mb_runtime, db, logger, scheduler, settings
+from .musicbrainz.applemusic import (
+    AppleMusicSearch,
+    MATCHABLE_TYPES,
+    candidates_needing_links,
+    find_links,
+)
+from .musicbrainz.discovered import (
+    apply_discovered_links,
+    project_discovered_links,
+    recently_checked,
+    record_lookups,
+)
+from .musicbrainz.factory import build_user_agent
+from .musicbrainz.ratelimit import RateLimiter
 from .musicbrainz.maintenance import cleanup_cache
 from .musicbrainz.reader import count_releases
 from .musicbrainz.service import is_stale
@@ -18,6 +33,7 @@ from .musicbrainz.writer import get_sync_state, sync_label, sync_label_increment
 SYNC_LABEL_TASK = "mb_sync_label"
 REFRESH_TRACKED_TASK = "mb_refresh_tracked"
 CLEANUP_TASK = "mb_cleanup_cache"
+FIND_LINKS_TASK = "mb_find_links"
 
 # Runs the scheduler considers still outstanding. A label with one of these
 # already queued must not be queued again.
@@ -38,16 +54,157 @@ def sync_label_task(label_gid=None, **_):
     cache, source, mirror = build_mb_runtime(pool_size=0)
     try:
         state = sync_label(source, cache, label_gid)
+        # The sync just replaced the URL set of every release it touched, which
+        # takes the found links with it. Put them back before anyone renders.
+        restored = _restore_discovered_links(cache)
         return {
             "ok": state.status == "complete",
             "label_gid": label_gid,
             "status": state.status,
             "releases": state.release_count_local,
+            "links_restored": restored,
         }
     finally:
         cache.close()
         if mirror is not None:
             mirror.close()
+
+
+def _restore_discovered_links(cache):
+    """
+    Re-apply the found links a sync has just written over.
+
+    Failing here must not fail the sync that called it: the releases are
+    cached and correct either way, and what is lost is some links reappearing
+    until the next run, which the next sync of any label repairs.
+    """
+    try:
+        restored = project_discovered_links(cache, db)
+        cache.commit()
+        if restored:
+            logger.info("restored %s discovered link(s) into the cache", restored)
+        return restored
+    except Exception as error:  # noqa: BLE001 - the sync itself still stands
+        cache.rollback()
+        logger.warning("could not restore discovered links: %s", error)
+        return 0
+
+
+def find_links_task(limit=None, since_year=None, **_):
+    """
+    Search Apple Music for albums MusicBrainz has no link for, and keep the
+    confident matches.
+
+    Runs weekly and unattended, which is the whole reason the matching in
+    applemusic.py is as conservative as it is: nothing here is reviewed by a
+    person before it appears on a page. What makes that acceptable is the blast
+    radius -- a wrong link is a bad link on one card of this app. It is
+    explicitly *not* offered to MusicBrainz, where a wrong link would be
+    everyone's problem.
+
+    Bounded on three sides so an unattended job cannot run away: only albums and
+    EPs, only releases since APPLE_MATCH_SINCE_YEAR, and never more than
+    APPLE_MATCH_MAX_LOOKUPS searches per run. Releases already searched inside
+    APPLE_MATCH_RECHECK_DAYS are skipped, so a run's cost tracks new releases
+    rather than the size of the catalogue.
+    """
+    if not settings.APPLE_MATCH_ENABLED:
+        return {"enabled": False}
+
+    service = "apple_music"
+    limit = limit or settings.APPLE_MATCH_MAX_LOOKUPS
+    if since_year is None:
+        since_year = settings.APPLE_MATCH_SINCE_YEAR
+    if since_year is None:
+        since_year = datetime.date.today().year - 2
+
+    cache, _source, mirror = build_mb_runtime(pool_size=0)
+    limiter = RateLimiter(
+        settings.APPLE_RATE_LIMIT_DB, min_interval=settings.APPLE_RATE_LIMIT_INTERVAL
+    )
+    try:
+        skip = recently_checked(db, service, settings.APPLE_MATCH_RECHECK_DAYS)
+        candidates = [
+            candidate
+            for candidate in candidates_needing_links(
+                cache, service, since_year, types=MATCHABLE_TYPES
+            )
+            if candidate["release_gid"] not in skip
+        ][:limit]
+
+        if not candidates:
+            return {"enabled": True, "candidates": 0, "found": 0}
+
+        logger.info(
+            "apple match: %s candidate(s) since %s, %s skipped as recently checked",
+            len(candidates),
+            since_year,
+            len(skip),
+        )
+
+        client = AppleMusicSearch(
+            limiter,
+            user_agent=build_user_agent(
+                settings.MB_USER_AGENT_NAME,
+                settings.MB_USER_AGENT_VERSION,
+                settings.MB_USER_AGENT_CONTACT,
+            ),
+            logger=logger,
+        )
+        links, reviews, checked = find_links(client, candidates, service=service, logger=logger)
+
+        source = f"apple-auto {datetime.date.today().isoformat()}"
+        added = _store_found_links(links, source)
+        record_lookups(db, service, checked)
+        db.commit()
+
+        applied = apply_discovered_links(cache, links)
+        cache.commit()
+
+        return {
+            "enabled": True,
+            "candidates": len(candidates),
+            "found": len(links),
+            "stored": added,
+            "shown": applied,
+            "for_review": len(reviews),
+            "source": source,
+        }
+    finally:
+        limiter.close()
+        cache.close()
+        if mirror is not None:
+            mirror.close()
+
+
+def _store_found_links(links, source):
+    """
+    Write found links into discovered_link, correcting rather than duplicating.
+
+    Identity is (release_gid, service), so a later run that finds a better URL
+    for a release replaces the earlier answer. `source` stamps the run, which is
+    what makes a bad batch withdrawable in one statement rather than one row at
+    a time.
+    """
+    if not links:
+        return 0
+
+    table = db.discovered_link
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    added = 0
+    for link in links:
+        existing = db(
+            (table.release_gid == link["release_gid"])
+            & (table.service == link["service"])
+        ).select().first()
+        if existing is None:
+            table.insert(source=source, found_on=now, **link)
+            added += 1
+        elif existing.url != link["url"]:
+            db(table.id == existing.id).update(
+                url=link["url"], rel_type=link["rel_type"], source=source, found_on=now
+            )
+    return added
 
 
 # Checking the queue and adding to it must not interleave. Every enqueue comes
@@ -109,7 +266,7 @@ def refresh_tracked_task(**_):
         return {"tracked": 0}
 
     cache, source, mirror = build_mb_runtime(pool_size=0)
-    checked = changed = queued = incrementals = failed = 0
+    checked = changed = queued = incrementals = failed = restored = 0
     try:
         for label_gid in tracked:
             checked += 1
@@ -162,6 +319,10 @@ def refresh_tracked_task(**_):
                 logger.warning(
                     "count check failed for tracked label %s: %s", label_gid, error
                 )
+
+        # Incremental catch-ups rewrite URL sets the same way a full sync does,
+        # so the found links need putting back here too.
+        restored = _restore_discovered_links(cache)
     finally:
         cache.close()
         if mirror is not None:
@@ -174,6 +335,7 @@ def refresh_tracked_task(**_):
         "incremental": incrementals,
         "queued": queued,
         "failed": failed,
+        "links_restored": restored,
     }
 
 
@@ -219,6 +381,7 @@ if settings.USE_SCHEDULER:
     scheduler.register_task(SYNC_LABEL_TASK, sync_label_task)
     scheduler.register_task(REFRESH_TRACKED_TASK, refresh_tracked_task)
     scheduler.register_task(CLEANUP_TASK, cleanup_cache_task)
+    scheduler.register_task(FIND_LINKS_TASK, find_links_task)
 
 if settings.USE_SCHEDULER and settings.RUN_SCHEDULER:
     scheduler.start()
@@ -253,4 +416,16 @@ if settings.USE_SCHEDULER and settings.RUN_SCHEDULER:
             inputs={},
             timeout=settings.MB_SYNC_TIMEOUT,
             period=settings.MB_CLEANUP_PERIOD,
+        )
+
+    if settings.APPLE_MATCH_ENABLED and not db(
+        (db.task_run.name == FIND_LINKS_TASK)
+        & (db.task_run.status.belongs(PENDING_STATUSES))
+    ).count():
+        scheduler.enqueue_run(
+            FIND_LINKS_TASK,
+            description="look for Apple Music links MusicBrainz lacks",
+            inputs={},
+            timeout=settings.MB_SYNC_TIMEOUT,
+            period=settings.APPLE_MATCH_PERIOD,
         )
