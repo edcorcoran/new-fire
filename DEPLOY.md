@@ -584,6 +584,17 @@ since the next sync of each label does the same thing.
   and is gitignored. It signs session cookies, so treat it as a credential: do
   not copy the development one up, and do not let it back into git. Replacing it
   logs everyone out and breaks nothing else.
+- **The link sweep is capped per run.** `mb_find_links` makes at most
+  `APPLE_MATCH_MAX_LOOKUPS` searches a week, three seconds apart, so a cold
+  backlog is spread over several weeks rather than spent in one go against a
+  free API. Releases it has already searched are remembered in `link_lookup` and
+  skipped for `APPLE_MATCH_RECHECK_DAYS`, so a steady-state run costs about as
+  many requests as there were new albums that week. `APPLE_MATCH_ENABLED = False`
+  in `settings_private.py` turns it off entirely.
+- **To see what the sweep has been adding**, dump the table rather than trusting
+  it: `python scripts/import_discovered_links.py --export /tmp/links.csv` prints
+  a count per `source`, and each weekly run stamps its own -- so a batch that
+  looks wrong can be found and deleted by source in one statement.
 - **Sync pickup takes up to ten seconds.** pydal's scheduler polls on a ten
   second `sleep_time`, so a label queued by a page view waits that long before
   its sync begins. Pages never block on it, so this is latency on a background

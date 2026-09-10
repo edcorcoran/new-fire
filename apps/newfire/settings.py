@@ -122,6 +122,40 @@ MB_HIDE_LABEL_TYPES = None
 MB_CLEANUP_PERIOD = 604800  # weekly
 MB_CLEANUP_GRACE_DAYS = 1
 
+# --- Finding links MusicBrainz does not carry ------------------------------
+#
+# A weekly sweep asks Apple's iTunes Search API for albums and EPs that have no
+# Apple Music link, and records confident matches. See
+# musicbrainz/applemusic.py for what "confident" means and why singles are
+# excluded. Nothing here is ever sent to MusicBrainz: these links go into this
+# app's own database, where a wrong one costs a bad link on one page.
+APPLE_MATCH_ENABLED = True
+
+# How often the sweep runs. Weekly rather than nightly because it is chasing
+# records MusicBrainz has not got round to describing, which is a slow process.
+APPLE_MATCH_PERIOD = 604800
+
+# Most searches one run may make. The safety valve: the first run over a cold
+# cache has a large backlog, and this spreads it over several weeks instead of
+# spending an hour against a free API in one go.
+APPLE_MATCH_MAX_LOOKUPS = 200
+
+# How far back to look. Older records are mostly pre-streaming or genuinely
+# absent from Apple, so searching them is a poor use of the budget above. None
+# means the current year minus two.
+APPLE_MATCH_SINCE_YEAR = None
+
+# How long a search result stands before the release is searched again. A miss
+# is not permanent -- Apple gains records, and a release announced before it is
+# available starts matching later -- but re-asking weekly forever would make
+# the sweep cost grow with the back catalogue rather than with new releases.
+APPLE_MATCH_RECHECK_DAYS = 180
+
+# Seconds between requests to Apple, shared across processes. Apple documents
+# approximately 20 calls per minute and throttles by IP, which is what this is.
+APPLE_RATE_LIMIT_INTERVAL = 3.0
+APPLE_RATE_LIMIT_DB = os.path.join(DB_FOLDER, "applelimit.db")
+
 # How often a followed label gets a full resync regardless of its release count.
 # The count check cannot see a release being retitled, a streaming link being
 # added, or one release replacing another, so every label is swept properly

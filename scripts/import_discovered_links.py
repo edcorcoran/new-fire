@@ -155,9 +155,53 @@ def store(db, links, source, dry_run=False):
     return added, updated, unchanged
 
 
+def export(storage, path):
+    """
+    Dump discovered_link to CSV, newest first.
+
+    The `source` column is the point of it: the weekly sweep stamps each run,
+    so a batch that looks wrong can be found, eyeballed and -- if it is --
+    deleted by source in one statement.
+    """
+    storage_dir, storage_name = os.path.split(os.path.abspath(storage))
+    db = DAL(f"sqlite://{storage_name}", folder=storage_dir, migrate=True, pool_size=0)
+    define_discovered_link_table(db)
+    try:
+        rows = db(db.discovered_link.id > 0).select(
+            orderby=~db.discovered_link.found_on
+        )
+        with open(path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["release_gid", "service", "url", "rel_type", "source", "found_on"]
+            )
+            for row in rows:
+                writer.writerow(
+                    [
+                        row.release_gid,
+                        row.service,
+                        row.url,
+                        row.rel_type,
+                        row.source,
+                        row.found_on,
+                    ]
+                )
+        by_source = {}
+        for row in rows:
+            by_source[row.source] = by_source.get(row.source, 0) + 1
+        print(f"wrote {len(rows)} link(s) to {path}")
+        for source, count in sorted(by_source.items(), key=lambda kv: -kv[1]):
+            print(f"  {count:>5}  {source}")
+    finally:
+        db.close()
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv", help="reviewed matches to import")
+    parser.add_argument(
+        "csv", nargs="?", help="reviewed matches to import (omit with --export)"
+    )
     parser.add_argument("--storage", default=DEFAULT_STORAGE)
     parser.add_argument("--cache", default=DEFAULT_CACHE)
     parser.add_argument(
@@ -173,7 +217,18 @@ def main(argv=None):
         "(default: the CSV's name and today's date)",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--export",
+        metavar="PATH",
+        help="write every stored link to PATH as CSV and exit -- how to see "
+        "what the weekly sweep has been adding without trusting it blind",
+    )
     args = parser.parse_args(argv)
+
+    if args.export:
+        return export(args.storage, args.export)
+    if not args.csv:
+        parser.error("give a CSV to import, or --export to dump what is stored")
 
     source = args.source or "%s %s" % (
         os.path.basename(args.csv),

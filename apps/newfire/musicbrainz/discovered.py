@@ -23,6 +23,8 @@ knowledge of this module at all. And because identity in that table is
 the one found here rather than doubling the row.
 """
 
+import datetime
+
 from py4web import Field
 
 from .normalize import classify_url
@@ -75,6 +77,93 @@ def create_discovered_indexes(db):
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_discovered_link "
         "ON discovered_link (release_gid, service)"
     )
+
+
+def define_link_lookup_table(db, migrate=True):
+    """
+    Define link_lookup: which releases have already been searched for.
+
+    Without this the weekly sweep re-asks about every permanent miss forever,
+    and permanent misses are the majority -- most releases with no Apple Music
+    link genuinely have no Apple Music album page. Remembering the miss is what
+    keeps an unattended job's cost proportional to *new* releases rather than to
+    the whole back catalogue.
+
+    Kept in storage.db beside discovered_link rather than in the cache, for the
+    same reason: it is the record of an expensive external call, and losing it
+    to a cache rebuild would mean making every one of those calls again.
+    """
+    db.define_table(
+        "link_lookup",
+        Field("release_gid"),
+        Field("service"),
+        Field("checked_on", "datetime"),
+        # Whether that search found anything. A hit is worth keeping as well as
+        # a miss: it dates the answer, so a re-check can be scheduled without
+        # having to join back to discovered_link to find out what happened.
+        Field("found", "boolean", default=False),
+        migrate=migrate,
+        redefine=True,
+    )
+    return db.link_lookup
+
+
+def create_link_lookup_indexes(db):
+    """One answer per release per service, replaced rather than appended to."""
+    db.executesql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_link_lookup "
+        "ON link_lookup (release_gid, service)"
+    )
+
+
+def recently_checked(db, service, within_days, now=None):
+    """
+    Releases searched recently enough not to search again.
+
+    A miss is not necessarily permanent -- Apple's catalogue gains records, and
+    a release announced before it is available will start matching later -- so
+    this expires rather than being forever. `within_days` is that window.
+    """
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    cutoff = now - datetime.timedelta(days=within_days)
+    table = db.link_lookup
+    rows = db(
+        (table.service == service) & (table.checked_on > cutoff)
+    ).select(table.release_gid)
+    return {row.release_gid for row in rows}
+
+
+def record_lookups(db, service, checked, now=None):
+    """
+    Note that these releases were searched, and what came of it.
+
+    `checked` is an iterable of (release_gid, found) pairs, as
+    applemusic.find_links returns.
+    """
+    checked = list(checked or [])
+    if not checked:
+        return 0
+
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    table = db.link_lookup
+    gids = [gid for gid, _found in checked]
+
+    existing = {}
+    for batch in _chunked(gids):
+        for row in db(
+            (table.service == service) & (table.release_gid.belongs(batch))
+        ).select(table.id, table.release_gid):
+            existing[row.release_gid] = row.id
+
+    for gid, found in checked:
+        row_id = existing.get(gid)
+        if row_id is None:
+            table.insert(
+                release_gid=gid, service=service, checked_on=now, found=bool(found)
+            )
+        else:
+            db(table.id == row_id).update(checked_on=now, found=bool(found))
+    return len(checked)
 
 
 def _chunked(values, size=_CHUNK):

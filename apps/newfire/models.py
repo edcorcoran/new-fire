@@ -5,7 +5,12 @@ This file defines the database models
 from pydal.validators import *
 
 from .common import Field, auth, db
-from .musicbrainz import create_discovered_indexes, define_discovered_link_table
+from .musicbrainz import (
+    create_discovered_indexes,
+    create_link_lookup_indexes,
+    define_discovered_link_table,
+    define_link_lookup_table,
+)
 
 # MusicBrainz itself is deliberately not modelled with pydal. The mirror is
 # queried with raw SQL in musicbrainz/sources.py, and everything the app renders
@@ -42,5 +47,10 @@ db.executesql(
 # earns its keep.
 define_discovered_link_table(db)
 create_discovered_indexes(db)
+
+# What has already been searched for, so the weekly sweep's cost tracks new
+# releases rather than the whole back catalogue.
+define_link_lookup_table(db)
+create_link_lookup_indexes(db)
 
 db.commit()

@@ -9,13 +9,19 @@ projection converges — it can be re-applied after any sync, any number of time
 without duplicating a row or resurrecting one that was withdrawn upstream.
 """
 
+import datetime
+
 from conftest import add, label, release, streaming
 
 from musicbrainz.discovered import (
     apply_discovered_links,
     create_discovered_indexes,
+    create_link_lookup_indexes,
     define_discovered_link_table,
+    define_link_lookup_table,
     read_discovered_links,
+    recently_checked,
+    record_lookups,
 )
 from musicbrainz.reader import get_releases
 from musicbrainz.writer import sync_label, upsert_label
@@ -195,5 +201,77 @@ def test_read_discovered_links_round_trips(tmp_path):
                 rel_type="streaming",
             )
         ]
+    finally:
+        db.close()
+
+
+# ------------------------------------------------- remembering what was searched
+
+
+def _storage(tmp_path):
+    """A throwaway storage.db with the two link tables."""
+    from py4web import DAL
+
+    db = DAL("sqlite:memory", folder=str(tmp_path), migrate=True, pool_size=0)
+    define_discovered_link_table(db)
+    create_discovered_indexes(db)
+    define_link_lookup_table(db)
+    create_link_lookup_indexes(db)
+    return db
+
+
+def test_a_miss_is_remembered_so_it_is_not_searched_again(tmp_path):
+    """
+    Most releases with no Apple Music link genuinely have no Apple album page.
+    Without remembering that, the weekly sweep re-asks about every one of them
+    forever and its cost grows with the back catalogue rather than with new
+    releases.
+    """
+    db = _storage(tmp_path)
+    try:
+        record_lookups(db, "apple_music", [("R1", False), ("R2", True)])
+        db.commit()
+
+        assert recently_checked(db, "apple_music", within_days=180) == {"R1", "R2"}
+    finally:
+        db.close()
+
+
+def test_a_check_expires_so_apple_gaining_the_record_is_noticed(tmp_path):
+    """A miss is not permanent: Apple's catalogue gains records."""
+    db = _storage(tmp_path)
+    try:
+        long_ago = datetime.datetime(2020, 1, 1)
+        record_lookups(db, "apple_music", [("R1", False)], now=long_ago)
+        db.commit()
+
+        assert recently_checked(db, "apple_music", within_days=180) == set()
+        assert recently_checked(db, "apple_music", within_days=100000) == {"R1"}
+    finally:
+        db.close()
+
+
+def test_re_checking_updates_rather_than_duplicating(tmp_path):
+    db = _storage(tmp_path)
+    try:
+        record_lookups(db, "apple_music", [("R1", False)])
+        record_lookups(db, "apple_music", [("R1", True)])
+        db.commit()
+
+        rows = db(db.link_lookup.release_gid == "R1").select()
+        assert len(rows) == 1
+        assert rows[0].found is True
+    finally:
+        db.close()
+
+
+def test_lookups_are_tracked_per_service(tmp_path):
+    db = _storage(tmp_path)
+    try:
+        record_lookups(db, "apple_music", [("R1", False)])
+        db.commit()
+
+        assert recently_checked(db, "apple_music", within_days=180) == {"R1"}
+        assert recently_checked(db, "spotify", within_days=180) == set()
     finally:
         db.close()

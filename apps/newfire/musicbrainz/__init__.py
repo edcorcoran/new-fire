@@ -29,12 +29,22 @@ from .normalize import (
     make_release,
     make_url,
 )
+from .applemusic import (
+    AppleMusicSearch,
+    candidates_needing_links,
+    find_links,
+    pick_match,
+)
 from .discovered import (
     apply_discovered_links,
     create_discovered_indexes,
+    create_link_lookup_indexes,
     define_discovered_link_table,
+    define_link_lookup_table,
     project_discovered_links,
     read_discovered_links,
+    recently_checked,
+    record_lookups,
 )
 from .factory import POSTGRES, WEBSERVICE, build_source, build_user_agent
 from .ratelimit import RateLimiter
@@ -67,6 +77,7 @@ from .writer import (
 )
 
 __all__ = [
+    "AppleMusicSearch",
     "MBSource",
     "MusicBrainzError",
     "POSTGRES",
@@ -88,12 +99,16 @@ __all__ = [
     "count_recent_releases",
     "count_release_groups",
     "count_releases",
+    "candidates_needing_links",
     "create_discovered_indexes",
+    "create_link_lookup_indexes",
     "define_cache_tables",
     "define_discovered_link_table",
+    "define_link_lookup_table",
     "ensure_label_cached",
     "ensure_label_record",
     "fill_label_cache",
+    "find_links",
     "flatten_artist_credit",
     "format_catalog_numbers",
     "format_partial_date",
@@ -107,8 +122,11 @@ __all__ = [
     "make_release",
     "make_url",
     "normalize_query",
+    "pick_match",
     "project_discovered_links",
     "read_discovered_links",
+    "recently_checked",
+    "record_lookups",
     "search_labels",
     "sync_label",
     "sync_label_incremental",
