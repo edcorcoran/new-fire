@@ -29,6 +29,13 @@ from .normalize import (
     make_release,
     make_url,
 )
+from .discovered import (
+    apply_discovered_links,
+    create_discovered_indexes,
+    define_discovered_link_table,
+    project_discovered_links,
+    read_discovered_links,
+)
 from .factory import POSTGRES, WEBSERVICE, build_source, build_user_agent
 from .ratelimit import RateLimiter
 from .reader import (
@@ -73,6 +80,7 @@ __all__ = [
     "WebServiceSource",
     "build_source",
     "build_user_agent",
+    "apply_discovered_links",
     "apply_sqlite_pragmas",
     "classify_url",
     "connect_cache",
@@ -80,7 +88,9 @@ __all__ = [
     "count_recent_releases",
     "count_release_groups",
     "count_releases",
+    "create_discovered_indexes",
     "define_cache_tables",
+    "define_discovered_link_table",
     "ensure_label_cached",
     "ensure_label_record",
     "fill_label_cache",
@@ -97,6 +107,8 @@ __all__ = [
     "make_release",
     "make_url",
     "normalize_query",
+    "project_discovered_links",
+    "read_discovered_links",
     "search_labels",
     "sync_label",
     "sync_label_incremental",

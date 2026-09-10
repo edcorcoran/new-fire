@@ -10,6 +10,7 @@ twice that.
 import threading
 
 from .common import build_mb_runtime, db, logger, scheduler, settings
+from .musicbrainz.discovered import project_discovered_links
 from .musicbrainz.maintenance import cleanup_cache
 from .musicbrainz.reader import count_releases
 from .musicbrainz.service import is_stale
@@ -38,16 +39,40 @@ def sync_label_task(label_gid=None, **_):
     cache, source, mirror = build_mb_runtime(pool_size=0)
     try:
         state = sync_label(source, cache, label_gid)
+        # The sync just replaced the URL set of every release it touched, which
+        # takes the found links with it. Put them back before anyone renders.
+        restored = _restore_discovered_links(cache)
         return {
             "ok": state.status == "complete",
             "label_gid": label_gid,
             "status": state.status,
             "releases": state.release_count_local,
+            "links_restored": restored,
         }
     finally:
         cache.close()
         if mirror is not None:
             mirror.close()
+
+
+def _restore_discovered_links(cache):
+    """
+    Re-apply the found links a sync has just written over.
+
+    Failing here must not fail the sync that called it: the releases are
+    cached and correct either way, and what is lost is some links reappearing
+    until the next run, which the next sync of any label repairs.
+    """
+    try:
+        restored = project_discovered_links(cache, db)
+        cache.commit()
+        if restored:
+            logger.info("restored %s discovered link(s) into the cache", restored)
+        return restored
+    except Exception as error:  # noqa: BLE001 - the sync itself still stands
+        cache.rollback()
+        logger.warning("could not restore discovered links: %s", error)
+        return 0
 
 
 # Checking the queue and adding to it must not interleave. Every enqueue comes
@@ -109,7 +134,7 @@ def refresh_tracked_task(**_):
         return {"tracked": 0}
 
     cache, source, mirror = build_mb_runtime(pool_size=0)
-    checked = changed = queued = incrementals = failed = 0
+    checked = changed = queued = incrementals = failed = restored = 0
     try:
         for label_gid in tracked:
             checked += 1
@@ -162,6 +187,10 @@ def refresh_tracked_task(**_):
                 logger.warning(
                     "count check failed for tracked label %s: %s", label_gid, error
                 )
+
+        # Incremental catch-ups rewrite URL sets the same way a full sync does,
+        # so the found links need putting back here too.
+        restored = _restore_discovered_links(cache)
     finally:
         cache.close()
         if mirror is not None:
@@ -174,6 +203,7 @@ def refresh_tracked_task(**_):
         "incremental": incrementals,
         "queued": queued,
         "failed": failed,
+        "links_restored": restored,
     }
 
 

@@ -174,12 +174,15 @@ apps/newfire/
     webservice.py       the live MusicBrainz API
     normalize.py        the record shape both sources emit
     cache.py            SQLite cache schema
+    discovered.py       links this app found, and their cache projection
     writer.py           syncing and upserts
     reader.py           what the pages read, including grouping and filters
     service.py          search, and deciding when a sync is due
     maintenance.py      cache cleanup
     ratelimit.py        cross-process rate limiter
 scripts/seed_cache.py   build a prewarmed cache from a mirror
+scripts/import_discovered_links.py
+                        load reviewed streaming-link matches
 tests/                  cache-layer tests; see "Tests" above
 deploy/                 proxy-facing server and cron entry points; see DEPLOY.md
 docs/                   the design study
@@ -203,8 +206,15 @@ anything that did not arrive through the proxy.
 ## Notes for anyone changing this
 
 - **The cache is disposable.** It is rebuildable from either source and holds no
-  user data; the only thing that would hurt to lose is `tracked_label` in
-  `storage.db`. Keep it that way.
+  user data; the things that would hurt to lose are `tracked_label` and
+  `discovered_link` in `storage.db`. Keep it that way.
+- **Found links live outside the cache.** MusicBrainz is missing a lot of Apple
+  Music links, and the ones this app finds for itself are kept in
+  `discovered_link` and *projected* into `mb_release_url` after each sync --
+  because `_replace_release_urls` rebuilds a release's links wholesale, anything
+  written straight into the cache is gone at the next refresh. The projection is
+  idempotent, and a link MusicBrainz later publishes collapses with the found one
+  rather than doubling the row. See `musicbrainz/discovered.py`.
 - **Everything is keyed on MBIDs.** MusicBrainz's integer ids are not stable
   across mirror rebuilds and the web service does not expose them.
 - **Sync order is undefined until a label is complete.** The browse endpoint
