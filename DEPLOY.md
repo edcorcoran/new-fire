@@ -540,6 +540,44 @@ count no longer matches its local one -- so followed labels are current again
 within a day, and a seeded label nobody follows refreshes the first time someone
 opens it.
 
+### Importing found streaming links
+
+`scripts/discovered_links.csv` is a reviewed set of Apple Music links for
+releases MusicBrainz has no link for. Unlike the cache, `git pull` *does* carry
+it -- it is committed for exactly this reason -- so a deploy brings the data up
+with the code and the only remaining step is to load it:
+
+```bash
+# on the VPS, after the pull and restart above
+cd ~/newfire
+~/newfire-venv/bin/python scripts/import_discovered_links.py scripts/discovered_links.csv
+```
+
+The `discovered_link` table it writes into does not need creating by hand. The
+restart runs `models.py`, which defines it through pydal's migrations, and the
+script opens `storage.db` at the same URI and folder the app uses, so both write
+the same `.table` metadata rather than each creating a table the other does not
+know about.
+
+**This one does not need the server stopped**, which is the opposite of the
+re-seed above and worth being clear about why. A re-seed replaces the database
+*file*, so anything holding it open is reading a file that no longer exists. This
+writes *through* SQLite, a few hundred `INSERT OR IGNORE`s, which is the same
+thing the scheduler does from inside the running process all day; WAL mode and
+the busy timeout in `cache.apply_sqlite_pragmas` are there precisely so a writer
+and the readers coexist.
+
+Links whose release is not in the server's cache are skipped rather than
+inserted, and the count printed at the end says how many. That is not a failure
+and needs no action: the links are still recorded in `storage.db`, and every
+later sync re-applies the whole set, so they appear on their own once the label
+that carries them is synced.
+
+**Re-run it after shipping a re-seeded cache.** A replaced `mbcache.db` is the
+mirror's view and has none of the projection in it. `storage.db` still holds
+every link, so the import is the cheap way to put them back -- or simply wait,
+since the next sync of each label does the same thing.
+
 ## Operating notes
 
 - **Session secret.** `apps/.service/session.secret` is generated on first boot
@@ -552,9 +590,10 @@ opens it.
   job rather than on a request.
 - **Task output goes to `/tmp/scheduler`** (pydal's default). Fine, but it is
   `/tmp` — do not expect yesterday's output to still be there.
-- **The cache is disposable, `storage.db` is not.** `tracked_label` is the only
-  irreplaceable data on the box. Back that one file up; `mbcache.db` rebuilds
-  from either source.
+- **The cache is disposable, `storage.db` is not.** `tracked_label` and
+  `discovered_link` are the irreplaceable data on the box. Back that one file
+  up; `mbcache.db` rebuilds from either source, and its found links rebuild from
+  `storage.db`.
 - **A mail failure is a 500, not a shrug.** py4web's Mailer re-raises whatever
   the SMTP conversation threw and auth does not catch it, so a wrong mailbox
   password turns the password reset form into an error page, with the reason in
