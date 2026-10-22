@@ -102,6 +102,16 @@ HINTS = {
         "The server does not offer what was asked of it -- typically STARTTLS "
         "on a port that expects implicit SSL. See the note on 465 vs 587."
     ),
+    "SSLCertVerificationError": (
+        "The server's certificate did not check out, so nothing was sent and "
+        "the password was not offered -- which is the connection working as "
+        "intended. Either SMTP_SERVER does not name the host the certificate "
+        "was issued to, something is intercepting port 465, or this machine "
+        "has no usable CA store (on a fresh VPS: apt install ca-certificates). "
+        "Do not work around it by disabling verification: the mailbox password "
+        "goes out over this connection. See install_certificate_verification "
+        "in mailer.py."
+    ),
     "SSLError": (
         "TLS handshake failed. Speaking SSL to a STARTTLS port looks like this; "
         "so does 465 with SMTP_SSL = False."

@@ -2,6 +2,10 @@
 Builds the Mailer that auth sends through, and decides what counts as a complete
 SMTP configuration.
 
+It also puts certificate verification back on the SMTP connection, which the
+stdlib leaves off and py4web has no setting for -- see
+install_certificate_verification below.
+
 Its own module rather than a few lines in common.py so the configuration can be
 checked without booting the app: importing the newfire package pulls in
 controllers, models and the scheduler, which is a great deal of machinery to
@@ -13,6 +17,8 @@ the running app would have built.
 import email.charset
 import email.encoders
 import email.header
+import smtplib
+import ssl
 
 from py4web.utils import mailer as py4web_mailer
 from py4web.utils.mailer import Mailer
@@ -54,6 +60,90 @@ def restore_compat_names():
 
 
 PATCHED_COMPAT_NAMES = restore_compat_names()
+
+
+def verified_context():
+    """An SSLContext that checks who is on the other end.
+
+    Nothing exotic: ssl.create_default_context() is hostname checking plus
+    CERT_REQUIRED against the system trust store. What makes it worth naming is
+    the default it displaces. Hand smtplib no context and it falls back to
+    ssl._create_stdlib_context(), which is check_hostname=False and
+    verify_mode=CERT_NONE -- a connection encrypted against a passive listener
+    and wide open to anyone able to answer in the server's place.
+
+    Built per connection rather than once at import, so a trust store that
+    arrives after the process starts is picked up, and so a missing one fails a
+    send rather than the whole app's import.
+    """
+    return ssl.create_default_context()
+
+
+class VerifyingSMTP_SSL(smtplib.SMTP_SSL):
+    """smtplib.SMTP_SSL with the verification it ought to default to.
+
+    setdefault rather than an unconditional assignment: a context handed in
+    explicitly is the caller's decision and is left alone.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("context", verified_context())
+        super().__init__(*args, **kwargs)
+
+
+class VerifyingSMTP(smtplib.SMTP):
+    """smtplib.SMTP whose STARTTLS verifies, for the port-587 configuration.
+
+    starttls() has the same unverified default as SMTP_SSL's constructor and
+    the same consequence, because AUTH comes after it either way. Fixed here
+    too even though this deployment sends over implicit SSL on 465: settings.py
+    documents the 587 alternative as supported, and a hole that opens when
+    someone changes two settings is worse than one that is simply there.
+    """
+
+    def starttls(self, *, context=None):
+        return super().starttls(context=context or verified_context())
+
+
+class VerifyingSMTPLib:
+    """Stands in for the smtplib module inside py4web's mailer namespace.
+
+    Mailer.send() chooses its class with `smtplib.SMTP_SSL if self.settings.ssl
+    else smtplib.SMTP` and constructs it with a timeout and nothing else, so
+    there is no argument to thread a context through -- the two class lookups
+    are the only seam available.
+
+    Swapping the module reference that py4web's mailer holds, rather than the
+    attributes of smtplib itself, keeps the change out of everything else in
+    the process: any other code here that opens an SMTP socket still gets the
+    stdlib's own classes and its own choices.
+    """
+
+    SMTP = VerifyingSMTP
+    SMTP_SSL = VerifyingSMTP_SSL
+
+    def __getattr__(self, name):
+        # Exception classes, constants, everything else: the real module's.
+        return getattr(smtplib, name)
+
+
+def install_certificate_verification():
+    """Point py4web's mailer at SMTP classes that verify certificates.
+
+    Not a repair waiting on an upstream release, the way restore_compat_names
+    is. py4web's Mailer exposes no setting for an SSLContext, and the stdlib's
+    default for a context nobody passed is no verification at all -- so the
+    mailbox password in SMTP_LOGIN, sent by server.login() right after the
+    handshake, goes out to whoever answered on port 465 against a certificate
+    that was never checked. A self-signed one is enough to collect it.
+
+    Returns the installed stand-in, so a caller can see that it is in place.
+    """
+    py4web_mailer.smtplib = VerifyingSMTPLib()
+    return py4web_mailer.smtplib
+
+
+VERIFYING_SMTPLIB = install_certificate_verification()
 
 
 def is_logging_server(server):
