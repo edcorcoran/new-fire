@@ -632,7 +632,14 @@ since the next sync of each label does the same thing.
   uses. Every send on that release fails before opening a socket, so it looks
   like a mailbox problem and is not one. The app repairs the module at import --
   see `restore_compat_names` in `apps/newfire/mailer.py` -- so a checkout newer
-  than that is enough; there is nothing to pin and nothing to downgrade. Accepted is not delivered, though: check the
+  than that is enough; there is nothing to pin and nothing to downgrade. The
+  other failure that is not a mailbox setting is `SSLCertVerificationError`: the
+  SMTP connection checks the server's certificate (see
+  `install_certificate_verification` in `apps/newfire/mailer.py`), so the box
+  needs a CA store. Any machine where the install steps above worked has one --
+  fetching `get-pip.py` used it -- but a stripped image missing
+  `ca-certificates` would send no mail, and the script names that rather than
+  leaving you with an SSL error code. Accepted is not delivered, though: check the
   inbox, and its spam folder — mail from a domain that has never sent any is
   treated with suspicion for a while. If it lands in spam and stays there, that
   is an SPF/DKIM question for the DreamHost panel, not an app setting.

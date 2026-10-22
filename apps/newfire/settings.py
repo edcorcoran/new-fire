@@ -197,6 +197,12 @@ ALLOWED_ACTIONS = ["all"]
 # STARTTLS entirely when SSL is on -- and setting both is not more secure, it is
 # just the SSL one.
 #
+# Either way the server's certificate is verified, which is not a setting and
+# has no switch: py4web's Mailer passes smtplib no SSLContext and smtplib's
+# default for that verifies nothing, so mailer.py supplies one. The password
+# below is sent immediately after the handshake, which is what makes it worth
+# the trouble. See install_certificate_verification in mailer.py.
+#
 # "logging" is also a valid SMTP_SERVER, and is what development uses: the
 # message is written to the log instead of a socket, so a reset link is readable
 # in the terminal without a mailbox password existing on the machine.
