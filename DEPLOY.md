@@ -492,6 +492,45 @@ looks successful, `crontab -l` is correct, and the only symptom is that your
 change did not take effect. Hence the `pgrep` after the kill -- confirm it is
 gone before waiting for cron, rather than discovering later that it never left.
 
+**Then confirm the new process is new.** Cron fires at the top of the minute, so
+give it up to 60 seconds, and check the age rather than the presence:
+
+```bash
+ps -o pid,etime,args -p $(pgrep -f "deploy/serve.py" | head -1)
+grep -n FAILED ~/newfire-logs/newfire.log
+curl -sI http://127.0.0.1:8123/ | head -1               # on the VPS; expect 403
+curl -sI -H 'X-Forwarded-For: 127.0.0.1' \
+     http://127.0.0.1:8123/ | head -1                   # on the VPS; expect 200
+```
+
+`ELAPSED` is the whole point of the first one. A pid proves something is
+serving; only its age proves it is serving *this* code, because the process read
+its modules at startup and `git pull` cannot reach into one already running. An
+elapsed time older than the pull means the kill did not take: go back to the
+`-9`, and this time wait for `stopped` to print before waiting on cron. That is
+the one thing `pgrep` alone cannot show you, because the two outcomes look
+identical -- a process is listed either way, whether the old one never left or a
+new one replaced it.
+
+**Count nothing in that log; compare line numbers.** `grep -c FAILED` belongs to
+step 5 of the first deploy, where the log is empty and any hit is this deploy's.
+Nothing rotates the file -- the crontab appends to it forever -- so on a server
+with history the count carries every past failure along with it, the `table
+"mb_label" already exists` residue a first deploy leaves included. So read the
+line number instead: note where the last known `FAILED` sits, and a clean start
+is one that adds nothing below it.
+
+**When the change touched mail or TLS**, send yourself a message too, because
+nothing above opens an SMTP socket and nothing above would notice if it failed:
+
+```bash
+~/newfire-venv/bin/python ~/newfire/scripts/send_test_email.py you@example.com
+```
+
+Put a real address in it. A domain with no MX record is accepted for relay and
+bounced afterwards, so a placeholder proves the handshake, the login and the
+relay, and then quietly never arrives.
+
 ### Shipping a re-seeded cache
 
 `git pull` does not carry the cache. It is a gitignored build artifact, so when
