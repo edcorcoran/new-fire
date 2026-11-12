@@ -1,13 +1,14 @@
 # Deploying new fire
 
-Written against the DreamHost VPS this runs on (Ubuntu 22.04, Python 3.10.12).
+Written against the DreamHost VPS this runs on (Ubuntu 26.04.1, Python 3.14.4;
+it was Ubuntu 22.04 and Python 3.10 until DreamHost upgraded it in November 2026).
 Three things about that host shape everything below:
 
 - **No root.** `newfire_admin` has no sudo, and neither does any other account
   on the box -- DreamHost grants it on Dedicated and DreamCompute, not VPS. So
-  no `apt`, no systemd unit, no editing anything under `/etc`, and no installing
-  the `python3-venv` package that a stock `python3 -m venv` needs -- which is
-  why step 1 builds the virtualenv the long way round.
+  no `apt`, no systemd unit, and no editing anything under `/etc`. It also
+  means the OS, and with it the system Python, is upgraded on DreamHost's
+  schedule rather than yours -- see "When DreamHost upgrades the OS".
 - **No Passenger.** DreamHost withdrew it. The supported way to run a Python app
   is now their **Proxy Server** -- Apache `mod_proxy` in front of a process you
   keep alive yourself on a high port. Some DreamHost KB pages still describe the
@@ -76,7 +77,7 @@ certificate. Step 6 verifies both wrappers.
   apps/newfire/databases/          storage.db, mbcache.db — NOT in git
   deploy/serve.sh                  what cron runs; sets host/port, execs:
   deploy/serve.py                  the web tier -- proxy guard, then py4web
-~/newfire-venv/                  virtualenv on the system Python 3.10
+~/newfire-venv/                  virtualenv on the system Python 3.14
 ~/newfire-logs/newfire.log       server output; NOT ~/logs, see step 5
 ```
 
@@ -116,23 +117,22 @@ insists on the public one, and pays for that with the 403 guard described above.
 dependency stack declares `>=3.9` and nothing in this app uses a newer stdlib
 API. Do not build a Python from source.
 
-Plain `python3 -m venv ~/newfire-venv` fails on this host:
-
-```
-The virtual environment was not created successfully because ensurepip is not
-available.  On Debian/Ubuntu systems, you need to install the python3-venv
-package [...]
-```
-
-Debian and Ubuntu split `ensurepip` and its bundled wheels out of the stdlib
-into a separate `python3.10-venv` package, and the advice in that message is an
-`apt` you do not have. The `venv` module itself is present — only its pip
-bootstrap is missing — so build the environment without pip and bootstrap pip
-into it afterwards, which needs nothing but the network:
-
 ```bash
 git clone https://github.com/edcorcoran/new-fire.git ~/newfire
 
+python3 -m venv ~/newfire-venv
+~/newfire-venv/bin/pip install -U pip
+~/newfire-venv/bin/pip install py4web
+```
+
+On 26.04 the stdlib's `ensurepip` is present, so the stock command works. It was
+not on 22.04, which this host ran until November 2026: Debian and Ubuntu split
+`ensurepip` into a separate `python3.X-venv` package, and without root you cannot
+install it. If `python3 -m venv` ever fails again with "ensurepip is not
+available", build the environment without pip and bootstrap pip into it, which
+needs nothing but the network:
+
+```bash
 rm -rf ~/newfire-venv          # a failed `python3 -m venv` leaves a stub behind
 python3 -m venv --without-pip ~/newfire-venv
 curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
@@ -141,20 +141,14 @@ curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
 ~/newfire-venv/bin/pip install py4web
 ```
 
-`get-pip.py` carries a pip wheel inside itself, so it has nothing to bootstrap
-from and installs a current pip — no `pip install --upgrade pip` afterwards.
-`setuptools` and `wheel` are named explicitly because `--without-pip` skips
-those too, and a dependency that ships no wheel for this platform will want
-them.
+`setuptools` and `wheel` are named there because `--without-pip` skips them too,
+and a dependency that ships no wheel for this platform will want them.
 
-Debian's `virtualenv` is also on the system path, and it seeds pip from its own
-wheels rather than from `ensurepip`, so `python3 -m virtualenv ~/newfire-venv`
-is a one-line substitute for the four above — *when* the `python3-pip-whl` and
-`python3-setuptools-whl` packages happen to be installed beside it. They are not
-guaranteed to be, and you cannot add them either. The route above does not care,
-so prefer it. (`python3 -m pip install --user virtualenv` is not a way out of
-that: pip sees the system copy, reports "Requirement already satisfied",
-installs nothing, and leaves you with no `~/.local/bin/virtualenv`.)
+**The virtualenv is tied to one Python minor version.** `~/newfire-venv/bin/python`
+is a symlink to `/usr/bin/python3`, and the packages live under
+`lib/python3.X/site-packages`. When DreamHost upgrades the OS, that symlink
+silently starts pointing at the new Python, which looks in a different
+`site-packages` and finds nothing. See "When DreamHost upgrades the OS" below.
 
 `psycopg2-binary` is deliberately absent. It exists only to read a local
 MusicBrainz mirror, and this host has neither a mirror nor a route to yours.
@@ -617,6 +611,68 @@ mirror's view and has none of the projection in it. `storage.db` still holds
 every link, so the import is the cheap way to put them back -- or simply wait,
 since the next sync of each label does the same thing.
 
+## When DreamHost upgrades the OS
+
+DreamHost upgrades the VPS's Ubuntu release on its own schedule, and nothing
+warns you. In November 2026 it moved this host from 22.04 to 26.04, which
+replaced Python 3.10 with 3.14 and removed 3.10 entirely. The site was down for
+about seven and a half days before anyone noticed.
+
+**What it looks like:**
+
+- The domain answers **503**, and `pgrep -af "deploy/serve.py"` lists nothing.
+- The log grows by one traceback a minute, every one of them this:
+
+  ```
+  ModuleNotFoundError: No module named 'py4web'
+  ```
+
+- `~/newfire-venv/bin/python -V` prints a version different from the `version`
+  line in `~/newfire-venv/pyvenv.cfg`.
+
+Cron is doing its job: it restarts the process every minute, and every start
+fails at the first import. The packages are all still there, under
+`lib/python3.<old>/site-packages`. The new interpreter just doesn't look there.
+
+**Recovery.** You can't run the old environment's pip, because its interpreter
+is gone. Read the installed versions off the `.dist-info` folder names instead,
+then build a new environment beside the old one:
+
+```bash
+cd ~/newfire-venv/lib/python3.*/site-packages && for d in *.dist-info; do
+  n=${d%.dist-info}; echo "${n%-*}==${n##*-}"
+done | grep -viE '^(pip|setuptools|wheel)==' > ~/newfire-pins.txt; cd ~
+
+mv ~/newfire-venv ~/newfire-venv.old      # keep it until the new one is proved
+python3 -m venv ~/newfire-venv            # see step 1 if ensurepip is missing
+~/newfire-venv/bin/pip install -U pip
+~/newfire-venv/bin/pip install -r ~/newfire-pins.txt
+```
+
+Nothing needs killing first, because nothing is running. Cron picks up the new
+environment within a minute. Then run the checks under "Deploying an update",
+and send a test email, since `mailer.py`'s compatibility shim depends on the
+Python version.
+
+If a pinned package has no wheel for the new Python, bump just that package and
+write down which one you changed. In the 3.10 → 3.14 move, all 31 installed at
+their old versions.
+
+**One error on the first start is expected:**
+
+```
+ERROR - scheduling.py:70 - scheduler step failed; retrying
+...
+ProcessLookupError: [Errno 3] No such process
+```
+
+pydal's scheduler tries to `SIGKILL` the pid of a run the dead process had
+claimed. That pid no longer exists. The retry loop in `scheduling.py` absorbs
+the error, and the next pass carries on normally. A second one isn't expected.
+
+Delete `~/newfire-venv.old` once the site has been up for a day. It's useless
+without its interpreter.
+
 ## Operating notes
 
 - **Session secret.** `apps/.service/session.secret` is generated on first boot
@@ -676,7 +732,7 @@ since the next sync of each label does the same thing.
   SMTP connection checks the server's certificate (see
   `install_certificate_verification` in `apps/newfire/mailer.py`), so the box
   needs a CA store. Any machine where the install steps above worked has one --
-  fetching `get-pip.py` used it -- but a stripped image missing
+  `pip install` used it -- but a stripped image missing
   `ca-certificates` would send no mail, and the script names that rather than
   leaving you with an SSL error code. Accepted is not delivered, though: check the
   inbox, and its spam folder — mail from a domain that has never sent any is
