@@ -386,43 +386,36 @@ if settings.USE_SCHEDULER:
 if settings.USE_SCHEDULER and settings.RUN_SCHEDULER:
     scheduler.start()
 
-    # One standing periodic run, enqueued only by the process that runs the
-    # loop. The guard below is read-then-write across processes, and web
-    # processes are neither single nor coordinated: two of them starting
-    # together would both see nothing pending and both enqueue. Since the
-    # scheduler reschedules a periodic task after each completion, that
-    # duplicate would double the sweep permanently rather than resolve itself.
+    # Exactly one standing periodic run each, established by the process that
+    # runs the loop. `ensure_one_standing_run` enforces that rather than
+    # checking for it: a surplus copy is permanent once it exists, because
+    # pydal gives every completed periodic run a successor, so each extra
+    # renews itself forever and the sweep runs twice a period, then four times.
+    # This app spent two months doing the daily label check about 490 times a
+    # day that way -- see failure mode 4 in scheduling.py. Enforcing it here
+    # also collapses a surplus that is already there, on the next start.
+    #
     # Only one worker ever runs the loop -- cron holds a lock to guarantee it,
-    # see DEPLOY.md -- so confining the enqueue here removes the race.
-    if not db(
-        (db.task_run.name == REFRESH_TRACKED_TASK)
-        & (db.task_run.status.belongs(PENDING_STATUSES))
-    ).count():
-        scheduler.enqueue_run(
-            REFRESH_TRACKED_TASK,
-            description="check followed labels for new releases",
-            inputs={},
-            timeout=settings.MB_SYNC_TIMEOUT,
-            period=settings.MB_REFRESH_PERIOD,
-        )
+    # see DEPLOY.md -- so confining this to the loop's own process keeps two
+    # web processes from racing the same decision.
+    scheduler.ensure_one_standing_run(
+        REFRESH_TRACKED_TASK,
+        description="check followed labels for new releases",
+        inputs={},
+        timeout=settings.MB_SYNC_TIMEOUT,
+        period=settings.MB_REFRESH_PERIOD,
+    )
 
-    if not db(
-        (db.task_run.name == CLEANUP_TASK)
-        & (db.task_run.status.belongs(PENDING_STATUSES))
-    ).count():
-        scheduler.enqueue_run(
-            CLEANUP_TASK,
-            description="drop unreachable cache rows",
-            inputs={},
-            timeout=settings.MB_SYNC_TIMEOUT,
-            period=settings.MB_CLEANUP_PERIOD,
-        )
+    scheduler.ensure_one_standing_run(
+        CLEANUP_TASK,
+        description="drop unreachable cache rows",
+        inputs={},
+        timeout=settings.MB_SYNC_TIMEOUT,
+        period=settings.MB_CLEANUP_PERIOD,
+    )
 
-    if settings.APPLE_MATCH_ENABLED and not db(
-        (db.task_run.name == FIND_LINKS_TASK)
-        & (db.task_run.status.belongs(PENDING_STATUSES))
-    ).count():
-        scheduler.enqueue_run(
+    if settings.APPLE_MATCH_ENABLED:
+        scheduler.ensure_one_standing_run(
             FIND_LINKS_TASK,
             description="look for Apple Music links MusicBrainz lacks",
             inputs={},
