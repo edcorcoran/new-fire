@@ -791,6 +791,43 @@ nine mails rather than two thousand.
   job rather than on a request.
 - **Task output goes to `/tmp/scheduler`** (pydal's default). Fine, but it is
   `/tmp` — do not expect yesterday's output to still be there.
+- **Each periodic task must have exactly one standing run**, and the app now
+  enforces that at every start rather than hoping for it -- see
+  `ensure_one_standing_run` in `scheduling.py`, and failure mode 4 in that
+  file's docstring for why. A surplus copy used to be permanent: pydal gives
+  every completed periodic run a successor, so each extra renewed itself
+  forever. From 2026-09-03 to 2026-11-15 the daily label check ran about 490
+  times a day for that reason, each copy making its own rate-limited
+  MusicBrainz requests, and nothing failed or logged a word about it. To check:
+
+  ```bash
+  sqlite3 ~/newfire/apps/newfire/databases/storage.db \
+    "select name, status, count(*) from task_run
+      where status in ('queued','assigned','running')
+      group by name, status;"
+  ```
+
+  One `queued` row per periodic task (`mb_refresh_tracked`,
+  `mb_cleanup_cache`, `mb_find_links`) is right; a count in the hundreds is
+  the bug above, and restarting the server collapses it. `mb_sync_label` rows
+  are label syncs rather than periodic work, so a few are normal and they
+  clear themselves.
+- **`task_run` is a log as well as a queue, and nothing prunes it.** A
+  behaving deployment adds a handful of rows a day, so this is slow -- but the
+  table reached 23,000 rows during the duplication above, and it lives in
+  `storage.db`, the one file on the box that matters. Completed history is
+  safe to drop; anything outstanding is not:
+
+  ```bash
+  sqlite3 ~/newfire/apps/newfire/databases/storage.db \
+    "delete from task_run
+      where status in ('completed','failed','dead','timeout','unknown')
+        and completed_on < date('now', '-30 days');
+     vacuum;"
+  ```
+
+  `vacuum` wants the write lock and rewrites the file, so run it when nothing
+  is syncing rather than mid-crawl.
 - **The cache is disposable, `storage.db` is not.** `tracked_label` and
   `discovered_link` are the irreplaceable data on the box. Back that one file
   up; `mbcache.db` rebuilds from either source, and its found links rebuild from
