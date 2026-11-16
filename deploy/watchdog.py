@@ -511,28 +511,45 @@ def send(config, subject, body):
             pass
 
 
-def compose(action, config, result, state, now):
-    """The subject and body for one alert."""
+def compose(action, config, result, since, now):
+    """The subject and body for one alert.
+
+    `since` -- when the outage began -- is passed in rather than read off a
+    state dict, because which dict holds it depends on the action: a recovery
+    has to read it from the state being *replaced*, the new one having already
+    forgotten it. Reading the new one produced "was down None" in the first
+    recovery mail this ever sent, which is why it is now an argument that
+    cannot be got silently wrong.
+    """
     host = config.url.split("//", 1)[-1].rstrip("/")
-    since = parse_time(state.get("since"))
-    down_for = describe_duration(now - since) if since else None
+    down_for = describe_duration(now - since) if since else describe_duration(None)
 
     if action == "recovered":
         subject = "%s is back up (was down %s)" % (host, down_for)
         body = (
             "%s is answering again.\n\n"
-            "It was down for %s, from %s UTC.\n\n"
+            "It was down for %s, from %s.\n\n"
             "Nothing here fixed it -- this only watches. If you did not restart "
             "anything, cron did it for you, which means it will probably happen "
             "again: worth reading the log.\n\n"
             "  %s\n"
-            % (config.url, down_for, state.get("since"), SERVER_LOG)
+            % (
+                config.url,
+                down_for,
+                ("%s UTC" % since.replace(microsecond=0).isoformat())
+                if since
+                else "an unknown time",
+                SERVER_LOG,
+            )
         )
         return subject, body
 
     if action == "still_down":
         subject = "%s STILL down (%s) -- %s" % (host, down_for, result.summary)
-        opening = "%s has been down for %s and is still down.\n" % (config.url, down_for)
+        opening = "%s has been down for %s and is still down.\n" % (
+            config.url,
+            down_for,
+        )
     else:
         subject = "%s is DOWN -- %s" % (host, result.summary)
         opening = "%s stopped answering.\n" % config.url
@@ -651,7 +668,12 @@ def main(argv=None):
     action, next_state = decide(state, result.ok, now, config.reminder)
 
     if action != "none":
-        subject, body = compose(action, config, result, next_state, now)
+        # The outage start is in the state being replaced when recovering, and
+        # in the new one otherwise. See compose().
+        since = parse_time(
+            (state if action == "recovered" else next_state).get("since")
+        )
+        subject, body = compose(action, config, result, since, now)
         try:
             send(config, subject, body)
             note("%s %s -- mailed %s" % (action.upper(), result.summary, config.recipient))

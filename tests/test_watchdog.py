@@ -239,6 +239,119 @@ def test_config_refuses_a_login_without_a_colon():
         watchdog.Config(Settings())
 
 
+# ------------------------------------------------------------- the mail itself
+
+
+class FakeSettings:
+    WATCHDOG_RECIPIENT = "you@example.test"
+    WATCHDOG_URL = "https://newfire.music/"
+    SMTP_SERVER = "smtp.example.test:465"
+    SMTP_SENDER = "new fire <noreply@newfire.music>"
+    SMTP_LOGIN = "noreply@newfire.music:secret"
+
+
+@pytest.fixture
+def config():
+    return watchdog.Config(FakeSettings())
+
+
+def test_the_down_mail_names_what_failed(config, monkeypatch):
+    monkeypatch.setattr(watchdog, "diagnose", lambda: "DIAGNOSIS")
+    subject, body = watchdog.compose(
+        "down", config, watchdog.Result(False, "HTTP 503"), T0, minutes(1)
+    )
+    assert subject == "newfire.music is DOWN -- HTTP 503"
+    assert "HTTP 503" in body
+    assert "DIAGNOSIS" in body
+
+
+def test_the_still_down_mail_says_how_long(config, monkeypatch):
+    monkeypatch.setattr(watchdog, "diagnose", lambda: "DIAGNOSIS")
+    subject, _ = watchdog.compose(
+        "still_down", config, watchdog.Result(False, "HTTP 503"), T0, hours(48)
+    )
+    assert "STILL down (2d)" in subject
+
+
+def test_the_recovery_mail_says_how_long_it_was_down(config):
+    """The regression: it said "was down None" the first time it ever sent one.
+
+    The recovery arrives with the outage already cleared from the new state, so
+    the duration has to come from the state being replaced. Getting that wrong
+    is invisible until a real recovery happens, which is the worst moment to
+    find out that the one mail saying "it's fine now" is malformed.
+    """
+    subject, body = watchdog.compose(
+        "recovered", config, watchdog.Result(True, "HTTP 200"), T0, hours(3)
+    )
+    assert subject == "newfire.music is back up (was down 3h)"
+    assert "down for 3h" in body
+    assert "None" not in subject and "None" not in body
+
+
+def test_main_passes_the_outage_start_through_to_the_recovery_mail(monkeypatch):
+    """End to end over the wiring, because that is where the bug was.
+
+    compose() can be correct and main() can still hand it the wrong state, so
+    this drives the real sequence -- a check that fails, then one that
+    succeeds -- and reads the mail that comes out.
+    """
+    sent = []
+    stored = {"state": {"status": "up", "since": None, "last_alert": None}}
+    answers = [watchdog.Result(False, "HTTP 503"), watchdog.Result(True, "HTTP 200")]
+    clock = [T0, hours(5)]
+
+    monkeypatch.setattr(watchdog, "load_private_settings", lambda *a, **k: FakeSettings())
+    monkeypatch.setattr(watchdog, "diagnose", lambda: "DIAGNOSIS")
+    monkeypatch.setattr(watchdog, "note", lambda *a, **k: None)
+    monkeypatch.setattr(watchdog, "look", lambda *a, **k: answers.pop(0))
+    monkeypatch.setattr(watchdog, "utcnow", lambda: clock.pop(0))
+    monkeypatch.setattr(watchdog, "load_state", lambda *a, **k: stored["state"])
+    monkeypatch.setattr(
+        watchdog, "save_state", lambda state, *a, **k: stored.update(state=state)
+    )
+    monkeypatch.setattr(
+        watchdog,
+        "send",
+        lambda config, subject, body: sent.append((subject, body)),
+    )
+
+    assert watchdog.main([]) == 1  # down
+    assert watchdog.main([]) == 0  # back up
+
+    assert len(sent) == 2
+    down_subject, _ = sent[0]
+    up_subject, up_body = sent[1]
+    assert down_subject == "newfire.music is DOWN -- HTTP 503"
+    assert up_subject == "newfire.music is back up (was down 5h)"
+    assert "None" not in up_subject and "None" not in up_body
+
+
+def test_a_mail_that_will_not_send_does_not_stop_the_state_advancing(monkeypatch):
+    """A broken mailbox must not turn into a check that retries forever."""
+    stored = {"state": {"status": "up", "since": None, "last_alert": None}}
+    notes = []
+
+    monkeypatch.setattr(watchdog, "load_private_settings", lambda *a, **k: FakeSettings())
+    monkeypatch.setattr(watchdog, "diagnose", lambda: "DIAGNOSIS")
+    monkeypatch.setattr(watchdog, "note", lambda message, *a, **k: notes.append(message))
+    monkeypatch.setattr(watchdog, "look", lambda *a, **k: watchdog.Result(False, "HTTP 503"))
+    monkeypatch.setattr(watchdog, "utcnow", lambda: T0)
+    monkeypatch.setattr(watchdog, "load_state", lambda *a, **k: stored["state"])
+    monkeypatch.setattr(
+        watchdog, "save_state", lambda state, *a, **k: stored.update(state=state)
+    )
+
+    def explode(*_a, **_k):
+        raise OSError("mailbox on fire")
+
+    monkeypatch.setattr(watchdog, "send", explode)
+
+    assert watchdog.main([]) == 1
+    assert stored["state"]["status"] == "down"
+    assert any("MAIL FAILED" in note for note in notes)
+
+
 def test_config_takes_the_reminder_interval_from_settings():
     class Settings:
         WATCHDOG_RECIPIENT = "you@example.test"
