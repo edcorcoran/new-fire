@@ -2,7 +2,7 @@
 A scheduler that survives its own accidents.
 
 pydal's Scheduler is fine at running tasks and poor at recovering from anything
-going wrong around them. Four failure modes bit this app. The first three stop
+going wrong around them. Five failure modes bit this app. The first three stop
 background work silently — the app keeps serving pages, jobs simply stop
 running, and nothing says so:
 
@@ -49,10 +49,37 @@ stopping, background work multiplies.
    against 82 followed labels. Nothing failed; there was no error anywhere. The
    app simply did a day's work several hundred times a day.
 
-This subclass fixes 1, 2 and 4, and leaves 3 to whoever wires it up.
+The fifth stops work again, and is the one that fixing 4 exposes.
+
+5. A periodic run that ends "dead" or "timeout" is never renewed, and so that
+   task stops for good. A periodic run is given its successor at the end of
+   `exec_child`, by the child itself -- so a run is renewed only if it lived
+   long enough to finish. Those two statuses are precisely the ones the
+   *parent* writes, in `step()`, about a child that did not: "dead" for a pid
+   that has vanished, "timeout" for one it killed itself. Neither goes near
+   `run.period`. The chain ends there, in silence: nothing failed, the next
+   run is simply never queued.
+
+   While failure mode 4 was running this did not show. With hundreds of
+   standing copies, one dying was neither here nor there; with exactly one, a
+   single kill ends the daily check until somebody notices it has been quiet
+   for a month. The production database holds eleven periodic runs that ended
+   this way between September and November 2026 -- nine dead, two timed out,
+   every one of them mb_refresh_tracked -- any of which would have been the
+   end of it.
+
+   The ordinary way to make one is to deploy. `pkill -f deploy/serve.py`
+   matches the forked children too, since a fork keeps the parent's command
+   line, and the sweep runs for hours past its 21:29 start -- so a restart in
+   that window kills a child mid-sweep, the next process finds a run whose pid
+   has gone and marks it dead, and the daily check is over. Which makes
+   "deploy an update" a way to turn the thing off.
+
+This subclass fixes 1, 2, 4 and 5, and leaves 3 to whoever wires it up.
 """
 
 import datetime
+import math
 import time
 
 from pydal.tools.scheduler import Scheduler
@@ -75,10 +102,36 @@ HANDOFF_GRACE = datetime.timedelta(seconds=60)
 # child is starting, which is the whole trouble in failure mode 4.
 IN_HAND_STATUSES = ("queued", "assigned", "running")
 
+# The two ways a run can end without renewing itself. Every other terminal
+# status -- "completed", and "failed" with it -- is written by the child at the
+# end of exec_child, which enqueues the successor on its way past. These two are
+# written by the parent about a child that never got there. See failure mode 5.
+ENDED_WITHOUT_SUCCESSOR = ("dead", "timeout")
+
 
 def _utcnow():
     """Naive UTC, matching what pydal's scheduler stores in task_run."""
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
+def _next_scheduled_for(run, after):
+    """
+    Where pydal would have put this periodic run's successor.
+
+    The arithmetic is exec_child's, kept deliberately identical: advance the
+    original `scheduled_for` by whole periods until it is past `after`. A
+    resumed chain therefore keeps the rhythm it had -- the daily sweep stays at
+    21:29 -- instead of restarting from now, which would walk it a little later
+    into the evening every time something killed it.
+
+    The one departure is the floor of a single period. exec_child can afford
+    `ceil(0) == 0` because it only ever runs after a task has finished; here the
+    run may have died the moment it started, and a successor due the instant it
+    is queued would retry every ten seconds for as long as the cause persists.
+    One period later is the conservative reading of "every day".
+    """
+    steps = max(1, math.ceil((after - run.scheduled_for).total_seconds() / run.period))
+    return run.scheduled_for + datetime.timedelta(seconds=run.period) * steps
 
 
 class ResilientScheduler(Scheduler):
@@ -116,10 +169,15 @@ class ResilientScheduler(Scheduler):
         self.logger.info("scheduler loop stopped (worker %s)", self.worker)
 
     def step(self):
-        """Reclaim orphaned runs, then take one pydal step."""
+        """Reclaim orphaned runs, take one pydal step, then renew what died."""
         self._forget_settled_handoffs()
         self.reclaim_orphaned_runs()
-        return super().step()
+        worked = super().step()
+        # Afterwards, not before: super().step() is what marks a vanished
+        # child's run "dead", so repairing here mends it in the same pass
+        # rather than ten seconds later.
+        self.resume_broken_periodic_chains()
+        return worked
 
     def next_run(self):
         """
@@ -186,6 +244,88 @@ class ResilientScheduler(Scheduler):
                     int(HANDOFF_GRACE.total_seconds()),
                 )
                 del self._handed_off[run_id]
+
+    def resume_broken_periodic_chains(self):
+        """
+        Give a periodic run that ended "dead" or "timeout" the successor pydal
+        never gave it.
+
+        pydal renews a periodic run at the end of `exec_child`, which is the
+        child's last act -- so the renewal happens only if the child lived to
+        reach it. The two statuses written *about* a child that did not are
+        "dead" and "timeout", both set by the parent in `step()`, and neither
+        looks at `run.period`. So the chain ends there and the task simply
+        stops. See failure mode 5.
+
+        This is a repair rather than a hook because the damage outlives the
+        pass that did it: a run marked dead by a process that has since been
+        replaced is still a chain with no tail, and reading the table is the
+        only way to find one. It costs a scan of task_run per pass, which is a
+        reason to keep that table pruned (DEPLOY.md says how).
+        """
+        table = self.db.task_run
+        stalled = self.db(
+            (table.period != None)  # noqa: E711
+            & table.status.belongs(ENDED_WITHOUT_SUCCESSOR)
+        ).select(table.name, distinct=True)
+        for row in stalled:
+            self._resume_periodic_chain(row.name)
+
+    def _resume_periodic_chain(self, name):
+        """
+        Queue one successor for `name`, if and only if its chain really ended.
+
+        Two conditions, and the second is the one that keeps this from becoming
+        failure mode 4 by another route:
+
+        Nothing of this name may be outstanding. A queued, assigned or running
+        copy is the chain, alive, however many older runs died along the way.
+
+        And the newest run of this name must be the one that ended badly.
+        Without that, there is a window to lose in: exec_child marks a run
+        completed and commits before inserting the successor, so for a moment a
+        healthy task has nothing outstanding and nothing to show for itself.
+        Checking that the ended run is the newest skips that window, since the
+        just-completed run is newer; it also means a successor queued here is
+        itself the newest row, so this cannot fire twice for the same break.
+        """
+        db = self.db
+        table = db.task_run
+
+        # An unregistered name is dropped on purpose -- see failure mode 3 --
+        # and enqueue_run would assert on it, which inside the loop would mean
+        # the same traceback every ten seconds forever.
+        if name not in self.tasks:
+            return
+
+        if db((table.name == name) & table.status.belongs(IN_HAND_STATUSES)).count():
+            return
+
+        latest = (
+            db(table.name == name).select(orderby=~table.id, limitby=(0, 1)).first()
+        )
+        if latest is None or latest.status not in ENDED_WITHOUT_SUCCESSOR:
+            return
+        if not latest.period:
+            return
+
+        scheduled_for = _next_scheduled_for(latest, latest.completed_on or _utcnow())
+        self.enqueue_run(
+            latest.name,
+            latest.description,
+            latest.inputs,
+            latest.timeout,
+            latest.priority,
+            latest.period,
+            scheduled_for,
+        )
+        self.logger.warning(
+            "run #%i %s ended %s and was never renewed; queued its successor for %s",
+            latest.id,
+            latest.name,
+            latest.status,
+            scheduled_for,
+        )
 
     def ensure_one_standing_run(self, name, **kwargs):
         """
