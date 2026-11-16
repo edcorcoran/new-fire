@@ -673,6 +673,95 @@ the error, and the next pass carries on normally. A second one isn't expected.
 Delete `~/newfire-venv.old` once the site has been up for a day. It's useless
 without its interpreter.
 
+## Knowing when it breaks
+
+The outage above lasted seven and a half days and ended because a friend
+mentioned the site was down. Nothing on the box was broken in a way anything
+would notice: cron restarted the server every minute exactly as instructed, the
+server died at its first import every time, and cron has no opinion about
+whether its child stays up. A supervisor that cannot tell success from failure
+is a supervisor that will let this happen again.
+
+`deploy/watchdog.py` closes that gap. It asks the site the same question a
+visitor asks -- `GET https://newfire.music/`, expecting a 200 with the site's
+title in it -- and mails a human when the answer changes.
+
+**It runs on the system interpreter, out of the standard library, and imports
+nothing of this app's.** That is the whole design, not an aesthetic: the failure
+it exists to catch broke every import in the virtualenv, so a watchdog living in
+that virtualenv would have been as dead as the app it was watching. It reads
+`settings_private.py` as data rather than importing the app, which also keeps
+the recipient address out of this public repository.
+
+**1. Name a recipient.** In `apps/newfire/settings_private.py`:
+
+```python
+WATCHDOG_RECIPIENT = "you@example.com"
+```
+
+Three optional settings sit beside it: `WATCHDOG_URL` and `WATCHDOG_MARKER` if
+the address or the title ever change, and `WATCHDOG_REMINDER_HOURS` (default
+24) for how often a site that is *still* down says so again. Mail goes out
+through the same mailbox as password resets, so there is no second credential
+to keep working -- and `SMTP_SERVER`, `SMTP_SENDER` and `SMTP_LOGIN` must
+already be set, or the watchdog exits 2 and tells you so.
+
+**2. Prove the mail path before trusting it.** A watchdog that cannot send is
+indistinguishable from one with nothing to report:
+
+```bash
+/usr/bin/python3 ~/newfire/deploy/watchdog.py --test-mail    # sends one message
+/usr/bin/python3 ~/newfire/deploy/watchdog.py --once --verbose  # checks, prints, mails nothing new
+```
+
+`--test-mail` sends a message that contains the same diagnosis block a real
+alert would, so you can see what one looks like while nothing is wrong.
+
+**3. Install the crontab line.** Alongside the server's, not replacing it:
+
+```bash
+( crontab -l 2>/dev/null; echo '*/5 * * * * /usr/bin/python3 /home/newfire_admin/newfire/deploy/watchdog.py' ) | crontab -
+crontab -l                                       # expect two lines now
+```
+
+Every five minutes, and `/usr/bin/python3` is deliberate -- do not "tidy" it
+into `~/newfire-venv/bin/python`, which would reintroduce the dependency the
+design is built to avoid. No `flock` and no redirect: a check finishes in
+seconds, and the script keeps its own log at `~/newfire-logs/watchdog.log`.
+A confirmed outage exits 1 but prints nothing, because cron mails you the
+output of a failing command and a daily cron mail about a daily outage is how
+alerts get filtered.
+
+**What arrives.** One mail when it goes down, one a day while it stays down,
+one when it comes back -- never one per check. The down mail carries the
+diagnosis that took a week to find by hand:
+
+- the Python-version mismatch above, named outright when the virtualenv's
+  interpreter can no longer see its own `site-packages`
+- whether anything accepts a connection on port 8123, which separates the app
+  being dead from DreamHost's proxy being dead
+- `pgrep -af deploy/serve.py`, and the tail of `~/newfire-logs/newfire.log`
+
+What it thinks right now is one command, and the answer is a file you can
+delete to reset it:
+
+```bash
+/usr/bin/python3 ~/newfire/deploy/watchdog.py --status
+```
+
+**What it does not cover.** The mail leaves *from the machine being watched*.
+A dead app, a dead proxy, an expired certificate, a DNS failure -- all caught.
+The VPS itself going away, losing its network, or DreamHost suspending the
+account -- not caught, because nothing is left running to tell you. Covering
+that needs a check from somewhere else: a cron job on another machine you own,
+or a dead-man's switch where this box pings a third-party service on a schedule
+and *that* service mails you when the pings stop. Neither belongs in this repo,
+but the absence is worth knowing about rather than discovering.
+
+`tests/test_watchdog.py` covers the part worth testing -- the alert policy,
+driven through eight days of five-minute checks to prove an outage produces
+nine mails rather than two thousand.
+
 ## Operating notes
 
 - **Session secret.** `apps/.service/session.secret` is generated on first boot
@@ -742,6 +831,10 @@ without its interpreter.
   Skipping SMTP entirely is still a defensible choice for a site this size — see
   the operating note on what unconfigured mail does — but then a forgotten
   password is a manual fix, so decide it rather than discover it.
+- **Set the watchdog up, or decide not to.** Cron keeps the server running and
+  tells nobody when it can't -- see "Knowing when it breaks". Installing it is a
+  setting and a crontab line, and the alternative is finding out the way it was
+  found out last time.
 - **Registration is open** to anyone with the URL, with no email verification.
   That is the right default for this app, but it is a decision rather than an
   accident.
