@@ -845,6 +845,18 @@ nine mails rather than two thousand.
 
   `vacuum` wants the write lock and rewrites the file, so run it when nothing
   is syncing rather than mid-crawl.
+
+  **Those single quotes are load-bearing.** SQLite reads a double-quoted word
+  as an identifier where a column of that name exists, and only falls back to
+  treating it as a string when none does -- and `timeout` is a column on
+  `task_run` as well as a status. So `status in ("timeout")` compares each
+  row's status against its own timeout value, matches nothing, and says
+  nothing: the rows you meant to delete simply stay, and the count that comes
+  back looks like a successful prune. None of the other four words is a column
+  name, so the one entry in that list that misbehaves is the one you would
+  never think to check. The usual way to get there is rewriting the inner
+  quotes to send the command through `ssh host "..."`; send it as `ssh host
+  'bash -s' <<'EOF'` instead and the quoting arrives as written.
 - **A periodic run that ends `dead` or `timeout` is renewed by this app, not
   by pydal.** pydal queues a periodic run's successor at the end of the child
   process, so a child that never gets there -- killed by a deploy, by the OOM
