@@ -752,11 +752,17 @@ delete to reset it:
 **What it does not cover.** The mail leaves *from the machine being watched*.
 A dead app, a dead proxy, an expired certificate, a DNS failure -- all caught.
 The VPS itself going away, losing its network, or DreamHost suspending the
-account -- not caught, because nothing is left running to tell you. Covering
-that needs a check from somewhere else: a cron job on another machine you own,
-or a dead-man's switch where this box pings a third-party service on a schedule
-and *that* service mails you when the pings stop. Neither belongs in this repo,
-but the absence is worth knowing about rather than discovering.
+account -- not caught, because nothing is left running to tell you.
+
+So there is a second check, off this box: a cron job on a machine at home runs
+the same five-minute check from outside and mails the same address. It lives in
+a private infrastructure repo rather than this one, since it is about that
+machine rather than about this app, and it holds its alert when it cannot reach
+anything at all -- so a domestic internet outage does not read as a site
+outage. **The useful consequence: an alert from the off-box check with no
+matching alert from this one means the VPS itself is gone** -- dead host, lost
+network, or a suspended account -- rather than the app being down. Check the
+DreamHost panel before reaching for ssh.
 
 `tests/test_watchdog.py` covers the part worth testing -- the alert policy,
 driven through eight days of five-minute checks to prove an outage produces
