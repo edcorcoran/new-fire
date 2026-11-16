@@ -468,11 +468,28 @@ pkill -f "deploy/serve.py"; sleep 5; pkill -9 -f "deploy/serve.py"
 pgrep -af "deploy/serve.py" || echo stopped
 ```
 
+**Send that kill from a shell on the VPS, or by pid.** `pkill -f
+"deploy/serve.py"` run as a single `ssh` command matches the command line of
+the remote shell running it, so the first `pkill` kills your own session and
+the `-9` behind it never happens -- while the server, which ignored that same
+SIGTERM, carries on serving the old code. The failure looks like success: ssh
+returns quietly, having done nothing. `kill -9 <pid>` cannot shoot itself, and
+`pgrep -af "serve[.]py"` is the form that does not match the shell asking.
+
 There is no reload signal and no restart file: the process imported the old
 code, so replacing it is the only way to pick up new code. Expect up to a
-minute of downtime while cron notices, and note that killing it also stops any
-label sync that was running -- the scheduler returns those runs to the queue on
-the next start, so nothing is lost but the work is redone.
+minute of downtime while cron notices, and note that killing it also kills any
+sync that was running: `pkill -f deploy/serve.py` matches the forked children
+too, since a fork keeps the parent's command line.
+
+What becomes of a run killed that way depends on how far it got. One that had
+not yet recorded a pid is returned to the queue on the next start. One that was
+already running is marked `dead` instead -- its pid is gone and there is
+nothing to return. A label sync lost that way is re-queued by the next visitor
+to the label. A *periodic* run lost that way used to be the end of that task
+for good, which made deploying during the nightly sweep a way to switch it off;
+`resume_broken_periodic_chains` in `scheduling.py` now queues the successor
+pydal does not. See failure mode 5 in that file.
 
 **`SIGTERM` is not enough, and that is why the `-9` is there.** Rocket3 catches
 it, stops accepting connections, and logs `Stopping Rocket3` -- then waits for
@@ -828,6 +845,24 @@ nine mails rather than two thousand.
 
   `vacuum` wants the write lock and rewrites the file, so run it when nothing
   is syncing rather than mid-crawl.
+- **A periodic run that ends `dead` or `timeout` is renewed by this app, not
+  by pydal.** pydal queues a periodic run's successor at the end of the child
+  process, so a child that never gets there -- killed by a deploy, by the OOM
+  killer, or by its own timeout -- queues nothing, and that task stops for
+  good without logging a word. `resume_broken_periodic_chains` in
+  `scheduling.py` notices and queues it, keeping the original hour rather than
+  restarting the clock. To see whether it has had to:
+
+  ```bash
+  grep "never renewed" ~/newfire-logs/newfire.log
+  ```
+
+  A line there is the repair working, not a fault in itself. A run of them
+  means something is killing children, and the first suspect is a restart
+  during the nightly sweep. The eleven runs that ended this way between
+  September and November 2026 cost nothing only because failure mode 4 had
+  left hundreds of copies standing; with the one copy there should be, any of
+  them would have been the end of the daily check.
 - **The cache is disposable, `storage.db` is not.** `tracked_label` and
   `discovered_link` are the irreplaceable data on the box. Back that one file
   up; `mbcache.db` rebuilds from either source, and its found links rebuild from
