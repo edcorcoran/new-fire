@@ -13,10 +13,12 @@ jobs:
       # cancelling the other hides exactly the comparison worth having.
       fail-fast: false
       matrix:
-        # 3.10 is what the VPS runs, and py4web's own floor. 3.14 is what this
-        # repo is developed on. They are not interchangeable: smtplib dropped
-        # starttls's keyfile/certfile in 3.12, which mailer.py overrides, so a
-        # change can pass on one and fail on the other.
+        # 3.14 is what the VPS runs, since DreamHost's November 2026 OS upgrade,
+        # and what this repo is developed on. 3.10 is py4web's own floor, and
+        # was production until that upgrade. They are not interchangeable:
+        # smtplib dropped starttls's keyfile/certfile in 3.12, which mailer.py
+        # overrides, so a change can pass on one and fail on the other -- and
+        # keeping the floor leg is how the next upgrade stays a non-event.
         python-version: ["3.10", "3.14"]
 
     steps:
